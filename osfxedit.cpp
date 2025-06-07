@@ -8,7 +8,7 @@
 #include <audio/sidfx.h>
 #include <stdio.h>
 #include <string.h>
-
+#include <math.h>
 
 static char * const Screen = (char *)0xc000;
 static char * const Hires = (char *)0xe000;
@@ -19,9 +19,11 @@ char keyb_queue, keyb_repeat;
 
 __interrupt void isr(void)
 {
-	vic.color_border++;
+	vic.color_border = VCOL_YELLOW;
 	sidfx_loop();
+	vic.color_border = VCOL_LT_BLUE;
 	keyb_poll();
+	vic.color_border = VCOL_ORANGE;
 
 	if (!keyb_queue)
 	{
@@ -47,7 +49,7 @@ __interrupt void isr(void)
 			keyb_repeat = 20;
 		}
 	}
-	vic.color_border--;
+	vic.color_border = VCOL_BLACK;
 }
 
 RIRQCode	rirq_isr, rirq_mark0, rirq_mark1, rirq_bitmap;
@@ -55,24 +57,14 @@ RIRQCode	rirq_isr, rirq_mark0, rirq_mark1, rirq_bitmap;
 const SIDFX basefx = {
 	1000, 2048, 
 	SID_CTRL_GATE | SID_CTRL_SAW,
-	SID_ATK_8 | SID_DKY_204,
-	0x80 | SID_DKY_1500,
+	SID_ATK_8 | SID_DKY_24,
+	0x80 | SID_DKY_204,
 	0, 0,
-	8, 16,
+	4, 0,
 	0
 };
 
-SIDFX	effects[10] = {
-	{
-		1000, 2048,
-		SID_CTRL_GATE | SID_CTRL_SAW,
-		SID_ATK_8 | SID_DKY_204,
-		0x80 | SID_DKY_1500,
-		0, 0,
-		8, 16,
-		0
-	}
-};
+SIDFX	effects[10];
 
 char 	neffects = 1;
 
@@ -105,6 +97,8 @@ void showmenu(void)
 		cp[i] = VCOL_LT_BLUE;
 	}
 }
+
+void hires_draw_start(void);
 
 void showfxs(void)
 {
@@ -415,7 +409,10 @@ void edit_menu(char k)
 	switch(k)
 	{
 	case KSCAN_CSR_DOWN | KSCAN_QUAL_SHIFT:
-		cursorY = neffects;
+		if (neffects < 10)
+			cursorY = neffects;
+		else
+			cursorY = 9;
 		break;
 	case KSCAN_CSR_RIGHT:
 		if (cursorX < 15)
@@ -439,6 +436,7 @@ void edit_menu(char k)
 		case 0:
 			edit_load();
 			showfxs();
+			hires_draw_start();
 			break;
 		case 5:
 			edit_save();
@@ -446,6 +444,7 @@ void edit_menu(char k)
 		case 10:
 			edit_new();
 			showfxs();
+			hires_draw_start();
 			break;
 		case 15:
 			edit_undo();
@@ -663,7 +662,10 @@ void edit_effects(char k)
 	}
 
 	if (redraw)
+	{
 		showfxs();		
+		hires_draw_start();
+	}
 
 }
 
@@ -675,33 +677,45 @@ enum Phase
 	PHASE_DECAY
 };
 
+enum SIDFXState
+{
+	SIDFX_IDLE,
+	SIDFX_RESET_0,
+	SIDFX_READY,
+	SIDFX_PLAY,
+	SIDFX_WAIT
+};
+
 struct VirtualSID
 {	
 	Phase			phase;
 	char			ctrl;
 	char			attdec, susrel;
-	char			level;
 	unsigned		adsr, freq, pwm;
+	char			tick, delay, pos;
+	SIDFXState		state;
+
 }	vsid;
 
 // Maximum value and per frame step for ADSR emulation
-#define AMAX	(32 * 256)
-#define ASTEP	(AMAX * 5)
+static const unsigned AMAX	= 31 * 256;
+static const unsigned ASTEP	= AMAX * 5;
 
 // ADSR constants
-__striped static const unsigned AttackStep[16] = {
+static const unsigned AttackStep[16] = {
 	ASTEP / 2,   ASTEP / 8,  ASTEP / 16, ASTEP / 24,
 	ASTEP / 38,   ASTEP / 56,  ASTEP / 68, ASTEP / 80,
 	ASTEP / 100,   ASTEP / 250,  ASTEP / 500, ASTEP / 800,
 	ASTEP / 1000,   ASTEP / 3000,  ASTEP / 5000, ASTEP / 8000
 };
 
-__striped static const unsigned DecayStep[16] = {
+static const unsigned DecayStep[16] = {
 	ASTEP / 6,   ASTEP / 24,  ASTEP / 48, ASTEP / 72,
 	ASTEP / 114,   ASTEP / 168,  ASTEP / 204, ASTEP / 240,
 	ASTEP / 300,   ASTEP / 750,  ASTEP / 1500, ASTEP / 2400,
 	ASTEP / 3000,   ASTEP / 9000,  ASTEP / 15000, ASTEP / 24000
 };
+
 
 void vsid_advance(void)
 {
@@ -739,7 +753,7 @@ void vsid_advance(void)
 
 			if (vsid.adsr > sus + dec)
 				vsid.adsr -= dec;
-			else
+			else if (vsid.adsr > sus)
 				vsid.adsr = sus;
 		}
 		break;
@@ -763,137 +777,151 @@ void vsid_advance(void)
 
 }
 
-enum SIDFXState
+void hires_bar(char * dp, const char * ady)
 {
-	SIDFX_IDLE,
-	SIDFX_RESET_0,
-	SIDFX_READY,
-	SIDFX_PLAY,
-	SIDFX_WAIT
+	char k = 0;
+	for(char i=0; i<32; i++)
+	{
+		char c = 0;
+		for(char j=0; j<8; j++)
+		{
+			if (i >= ady[j])
+				c |= (128 >> j);
+		}
+		if (i & 1)
+			c ^= 0x22;
+		dp[k] = c;
+		k++;
+		if (k == 8)
+		{
+			dp += 320;
+			k = 0;
+		}
+	}
+}
+
+static const char binlog32[256] = {
+#for(i, 256)	(int)(log(i) / log(2) * 4),
 };
 
-void hires_draw(void)
+
+void hires_draw_start(void)
 {
 	vsid.phase = PHASE_OFF;
 	vsid.ctrl = 0;
+	vsid.state = SIDFX_READY;
+	vsid.delay = 1;
+	vsid.tick = 0;
+	vsid.pos = 0;
+}
 
-	SIDFXState	state = SIDFX_READY;
-	char n = 0, delay = 0, tick = 0;	
-	char ady[8];
+void hires_draw_tick(void)
+{
+	char ady[8], fry[8];
 
-	while (tick < 80)
+	if (vsid.tick < 40)
 	{
-		Screen[0] = '0' + n;
-		Screen[1] = '0' + delay;
-		Screen[2] = '0' + state;
-		Screen[3] = '0' + vsid.phase;
-
-		switch (state)
+		for(char n=0; n<2; n++)
 		{
-		case SIDFX_RESET_0:
-			vsid.ctrl = 0;
-			vsid.attdec = 0;
-			vsid.susrel = 0;
-			state = SIDFX_READY;
-			break;
-		case SIDFX_READY:
-			if (n < neffects)
+			const SIDFX	*	com = effects + vsid.pos;
+			vsid.delay--;
+			if (vsid.delay)
 			{
-				const SIDFX	*	com = effects + n;
-				vsid.freq = com->freq;
-				vsid.pwm = com->pwm;
-				vsid.attdec = com->attdec;
-				vsid.susrel = com->susrel;
-				vsid.ctrl = com->ctrl;
-
-				delay = com->time1;
-				state = SIDFX_PLAY;
-			}
-			else
-				state = SIDFX_IDLE;
-			break;
-		case SIDFX_PLAY:
-			{
-				const SIDFX	*	com = effects + n;
 				if (com->dfreq)
 					vsid.freq += com->dfreq;
 				if (com->dpwm)
-					vsid.pwm += com->dpwm;
-
-				if (delay)
-					delay--;
-				else if (com->time0)
-				{
-					vsid.ctrl = com->ctrl & ~SID_CTRL_GATE;
-					delay = com->time0;
-					state = SIDFX_WAIT;
-				}
-				else
-				{
-					n++;
-					if (n < neffects)
-						state = SIDFX_READY;
-					else
-						state = SIDFX_RESET_0;
-				}
+					vsid.pwm += com->dpwm;				
 			}
-			break;
-		case SIDFX_WAIT:
+			while (!vsid.delay)
 			{
-				const SIDFX	*	com = effects + n;
-				if (com->dfreq)
-					vsid.freq += com->dfreq;
-				if (com->dpwm)
-					vsid.pwm += com->dpwm;
-
-				if (delay)
-					delay--;
-				else
+				switch (vsid.state)
 				{
-					n++;
-					if (n < neffects)
+				case SIDFX_IDLE:
+					vsid.delay = 1;
+					break;
+				case SIDFX_RESET_0:
+					vsid.ctrl = 0;
+					vsid.attdec = 0;
+					vsid.susrel = 0;
+					vsid.state = SIDFX_READY;
+					vsid.delay = 1;
+					break;
+				case SIDFX_READY:
+					if (vsid.pos < neffects)
 					{
-						com++;
-						if (com->time1)
-							state = SIDFX_RESET_0;
+						vsid.freq = com->freq;
+						vsid.pwm = com->pwm;
+						vsid.attdec = com->attdec;
+						vsid.susrel = com->susrel;
+						vsid.ctrl = com->ctrl;
+
+						if (com->ctrl & SID_CTRL_GATE)
+						{
+							vsid.delay = com->time1;
+							vsid.state = SIDFX_PLAY;
+						}
 						else
-							state = SIDFX_READY;
+						{
+							vsid.delay = com->time0;
+							vsid.state = SIDFX_WAIT;
+						}
 					}
 					else
-						state = SIDFX_RESET_0;
+						vsid.state = SIDFX_IDLE;
+					break;
+				case SIDFX_PLAY:
+					if (com->time0)
+					{
+						vsid.ctrl = com->ctrl & ~SID_CTRL_GATE;
+						vsid.delay = com->time0 - 1;
+						vsid.state = SIDFX_WAIT;
+					}
+					else
+					{
+						vsid.pos++;
+						if (vsid.pos < neffects)
+						{
+							char sr = com->susrel & 0xf0;
+							com++;
+							if (com->attdec == 0 && (com->ctrl & SID_CTRL_GATE) && (com->susrel & 0xf0) > sr)
+								vsid.phase = PHASE_RELEASE;
+							vsid.state = SIDFX_READY;
+						}
+						else
+							vsid.state = SIDFX_RESET_0;
+					}
+					break;
+				case SIDFX_WAIT:
+					vsid.pos++;
+					if (vsid.pos < neffects)
+					{
+						com++;
+						if (com->ctrl & SID_CTRL_GATE)
+							vsid.state = SIDFX_RESET_0;
+						else
+							vsid.state = SIDFX_READY;
+					}
+					else
+						vsid.state = SIDFX_RESET_0;
+					break;
 				}
 			}
-			break;
-		}
 
-		for(char i=0; i<4; i++)
-		{
-			vsid_advance();
-			ady[i + (4 * (tick & 1))] = 31 - (vsid.adsr >> 8);
-		}
-		tick++;
-		if (!(tick & 1))
-		{
-			char * dp = Hires + 320 * 12 + 8 * ((tick - 2) >> 1);
 
-			char k = 0;
-			for(char i=0; i<32; i++)
+			for(char i=0; i<4; i++)
 			{
-				char c = 0;
-				for(char j=0; j<8; j++)
-				{
-					if (i >= ady[j])
-						c |= (128 >> j);
-				}
-				dp[k] = c;
-				k++;
-				if (k == 8)
-				{
-					dp += 320;
-					k = 0;
-				}
+				char j = i + 4 * n;
+				vsid_advance();
+				ady[j] = 31 - (vsid.adsr >> 8);
+				fry[j] = 31 - binlog32[vsid.freq >> 8];
 			}
 		}
+
+		char * dp = Hires + 320 * 12 + 8 * vsid.tick;
+		hires_bar(dp, ady);
+		dp += 320 * 4;
+		hires_bar(dp, fry);	
+		vsid.tick++;
 	}
 }
 
@@ -939,16 +967,16 @@ int main(void)
 
 	memset(Screen, 0x10, 1000);
 
+	effects[0] = basefx;
+	neffects = 1;
+	
 	showfxs();		
 	showmenu();
+	hires_draw_start();
 
-	for(int i=0; i<640; i+=4)
-	{
-		Hires[320 * 12 + i    ] = 0x11;
-		Hires[320 * 12 + i + 1] = 0x00;
-		Hires[320 * 12 + i + 2] = 0x11;
-		Hires[320 * 12 + i + 3] = 0x00;
-	}
+	memset(Hires + 12 * 320, 0, 13 * 320);
+	memset(Screen + 12 * 40, 0x70, 160);
+	memset(Screen + 16 * 40, 0xe0, 160);
 
 	bool	markset = false;
 	for(;;)
@@ -964,6 +992,7 @@ int main(void)
 				curc[i] = VCOL_YELLOW;
 		}
 
+		hires_draw_tick();
 		vic_waitBottom();
 		if (sidfx_idle(0))
 		{
@@ -1004,9 +1033,6 @@ int main(void)
 		{
 			char k = keyb_queue & KSCAN_QUAL_MASK;
 			keyb_queue = 0;
-
-			if (k == KSCAN_F1)
-				hires_draw();
 
 			if (cursorY < 10)
 			{
