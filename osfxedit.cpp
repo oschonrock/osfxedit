@@ -5,6 +5,7 @@
 #include <c64/vic.h>
 #include <c64/rasterirq.h>
 #include <c64/iecbus.h>
+#include <c64/sprites.h>
 #include <audio/sidfx.h>
 #include <stdio.h>
 #include <string.h>
@@ -14,11 +15,17 @@ static char * const Screen = (char *)0xc000;
 static char * const Hires = (char *)0xe000;
 static char * const Color = (char *)0xd800;
 static char * const Font = (char *)0xd000;
+static char * const Sprites = (char *)0xd000;
 
 char keyb_queue, keyb_repeat;
+char csr_cnt;
+char irq_cnt;
 
 __interrupt void isr(void)
 {
+	irq_cnt++;
+	csr_cnt++;
+
 	vic.color_border = VCOL_YELLOW;
 	sidfx_loop();
 	vic.color_border = VCOL_LT_BLUE;
@@ -100,6 +107,104 @@ void showmenu(void)
 
 void hires_draw_start(void);
 
+void showfxs_row(char n)
+{
+	char * dp = Screen + 40 * (n + 1);
+	char * cp = Color + 40 * (n + 1);
+
+	for(char i=0; i<40; i++)
+	{
+		dp[i] = SidRow[i];
+		cp[i] = VCOL_DARK_GREY;
+	}
+
+	if (n < neffects)
+	{
+		char fs[6];
+		dp[0] = '0' + n;
+		cp[0] = VCOL_YELLOW;
+
+		SIDFX	&	s = effects[n];
+		if (s.ctrl & SID_CTRL_TRI)   cp[2] = VCOL_YELLOW;
+		if (s.ctrl & SID_CTRL_SAW)   cp[3] = VCOL_YELLOW;
+		if (s.ctrl & SID_CTRL_RECT)  cp[4] = VCOL_YELLOW;
+		if (s.ctrl & SID_CTRL_NOISE) cp[5] = VCOL_YELLOW;
+		if (s.ctrl & SID_CTRL_GATE)  cp[6] = VCOL_YELLOW;
+
+		uto5digit(s.freq, fs);
+		for(char i=0; i<5; i++)
+		{
+			dp[8 + i] = fs[i];
+			cp[8 + i] = VCOL_LT_GREY;
+		}
+
+		uto5digit(s.pwm, fs);
+		for(char i=0; i<4; i++)
+		{
+			dp[14 + i] = fs[i + 1];
+			cp[14 + i] = VCOL_LT_GREY;
+		}
+
+		if (s.dfreq < 0)
+		{
+			uto5digit(- s.dfreq, fs);
+			for(char i=0; i<5; i++)
+			{
+				dp[24 + i] = fs[i];
+				cp[24 + i] = VCOL_ORANGE;
+			}				
+		}
+		else
+		{
+			uto5digit(s.dfreq, fs);
+			for(char i=0; i<5; i++)
+			{
+				dp[24 + i] = fs[i];
+				cp[24 + i] = VCOL_LT_GREY;
+			}								
+		}
+
+		if (s.dpwm < 0)
+		{
+			uto5digit(- s.dpwm, fs);
+			for(char i=0; i<4; i++)
+			{
+				dp[30 + i] = fs[i + 1];
+				cp[30 + i] = VCOL_ORANGE;
+			}				
+		}
+		else
+		{
+			uto5digit(s.dpwm, fs);
+			for(char i=0; i<4; i++)
+			{
+				dp[30 + i] = fs[i + 1];
+				cp[30 + i] = VCOL_LT_GREY;
+			}								
+		}
+
+		dp[19] = HexDigit[s.attdec >> 4];   cp[19] = VCOL_YELLOW;
+		dp[20] = HexDigit[s.attdec & 0x0f]; cp[20] = VCOL_YELLOW;
+		dp[21] = HexDigit[s.susrel >> 4];   cp[21] = VCOL_YELLOW;
+		dp[22] = HexDigit[s.susrel & 0x0f]; cp[22] = VCOL_YELLOW;
+
+		uto5digit(s.time1, fs);
+		for(char i=0; i<2; i++)
+		{
+			dp[35 + i] = fs[i + 3];
+			cp[35 + i] = VCOL_LT_GREY;
+		}
+		uto5digit(s.time0, fs);
+		for(char i=0; i<2; i++)
+		{
+			dp[38 + i] = fs[i + 3];
+			cp[38 + i] = VCOL_LT_GREY;
+		}
+
+
+	}		
+}
+
 void showfxs(void)
 {
 	char * dp = Screen;
@@ -111,104 +216,8 @@ void showfxs(void)
 		cp[i] = VCOL_LT_BLUE;
 	}
 
-	for(char n=0; n<10; n++)
-	{
-		dp += 40;
-		cp += 40;
-
-		for(char i=0; i<40; i++)
-		{
-			dp[i] = SidRow[i];
-			cp[i] = VCOL_DARK_GREY;
-		}
-
-		if (n < neffects)
-		{
-			char fs[6];
-			dp[0] = '0' + n;
-			cp[0] = VCOL_YELLOW;
-
-			SIDFX	&	s = effects[n];
-			if (s.ctrl & SID_CTRL_TRI)   cp[2] = VCOL_YELLOW;
-			if (s.ctrl & SID_CTRL_SAW)   cp[3] = VCOL_YELLOW;
-			if (s.ctrl & SID_CTRL_RECT)  cp[4] = VCOL_YELLOW;
-			if (s.ctrl & SID_CTRL_NOISE) cp[5] = VCOL_YELLOW;
-			if (s.ctrl & SID_CTRL_GATE)  cp[6] = VCOL_YELLOW;
-
-			uto5digit(s.freq, fs);
-			for(char i=0; i<5; i++)
-			{
-				dp[8 + i] = fs[i];
-				cp[8 + i] = VCOL_LT_GREY;
-			}
-
-			uto5digit(s.pwm, fs);
-			for(char i=0; i<4; i++)
-			{
-				dp[14 + i] = fs[i + 1];
-				cp[14 + i] = VCOL_LT_GREY;
-			}
-
-			if (s.dfreq < 0)
-			{
-				uto5digit(- s.dfreq, fs);
-				for(char i=0; i<5; i++)
-				{
-					dp[24 + i] = fs[i];
-					cp[24 + i] = VCOL_ORANGE;
-				}				
-			}
-			else
-			{
-				uto5digit(s.dfreq, fs);
-				for(char i=0; i<5; i++)
-				{
-					dp[24 + i] = fs[i];
-					cp[24 + i] = VCOL_LT_GREY;
-				}								
-			}
-
-			if (s.dpwm < 0)
-			{
-				uto5digit(- s.dpwm, fs);
-				for(char i=0; i<4; i++)
-				{
-					dp[30 + i] = fs[i + 1];
-					cp[30 + i] = VCOL_ORANGE;
-				}				
-			}
-			else
-			{
-				uto5digit(s.dpwm, fs);
-				for(char i=0; i<4; i++)
-				{
-					dp[30 + i] = fs[i + 1];
-					cp[30 + i] = VCOL_LT_GREY;
-				}								
-			}
-
-			dp[19] = HexDigit[s.attdec >> 4];   cp[19] = VCOL_YELLOW;
-			dp[20] = HexDigit[s.attdec & 0x0f]; cp[20] = VCOL_YELLOW;
-			dp[21] = HexDigit[s.susrel >> 4];   cp[21] = VCOL_YELLOW;
-			dp[22] = HexDigit[s.susrel & 0x0f]; cp[22] = VCOL_YELLOW;
-
-			uto5digit(s.time1, fs);
-			for(char i=0; i<2; i++)
-			{
-				dp[35 + i] = fs[i + 3];
-				cp[35 + i] = VCOL_LT_GREY;
-			}
-			uto5digit(s.time0, fs);
-			for(char i=0; i<2; i++)
-			{
-				dp[38 + i] = fs[i + 3];
-				cp[38 + i] = VCOL_LT_GREY;
-			}
-
-
-		}		
-
-	}
+	for(char i=0; i<10; i++)
+		showfxs_row(i);
 }
 
 char kscan_digits[] = {
@@ -528,6 +537,7 @@ void edit_effects(char k)
 		cursorX = 0;
 		break;
 	case KSCAN_PLUS:
+	case KSCAN_DOT:
 		switch (cursorX)
 		{
 		case 0:
@@ -588,6 +598,7 @@ void edit_effects(char k)
 		redraw = true;
 		break;
 	case KSCAN_MINUS:
+	case KSCAN_COMMA:
 		switch (cursorX)
 		{
 		case 0: 
@@ -659,11 +670,12 @@ void edit_effects(char k)
 	{
 		sidfx_stop(0);
 		sidfx_play(0, effects, neffects);
+		irq_cnt = 0;
 	}
 
 	if (redraw)
 	{
-		showfxs();		
+		showfxs_row(cursorY);		
 		hires_draw_start();
 	}
 
@@ -699,7 +711,8 @@ struct VirtualSID
 
 // Maximum value and per frame step for ADSR emulation
 static const unsigned AMAX	= 31 * 256;
-static const unsigned ASTEP	= AMAX * 5;
+static const unsigned TSTEP = 20; // ms/frame
+static const unsigned ASTEP = (unsigned long)AMAX * TSTEP / 4;
 
 // ADSR constants
 static const unsigned AttackStep[16] = {
@@ -883,7 +896,7 @@ void hires_draw_tick(void)
 						{
 							char sr = com->susrel & 0xf0;
 							com++;
-							if (com->attdec == 0 && (com->ctrl & SID_CTRL_GATE) && (com->susrel & 0xf0) > sr)
+							if ((com->attdec & 0xef) == 0 && (com->ctrl & SID_CTRL_GATE) && (com->susrel & 0xf0) > sr)
 								vsid.phase = PHASE_RELEASE;
 							vsid.state = SIDFX_READY;
 						}
@@ -933,7 +946,16 @@ int main(void)
 
 	mmap_set(MMAP_CHAR_ROM);
 	memcpy(Hires, Font, 0x0800);
+
+	memset(Sprites, 0, 256);
+	for(char i=0; i<9; i++)
+		Sprites[0 * 64 + 3 * i] = 0xff;
+	Sprites[1 * 64 + 3 * 8] = 0xff;
+	for(char i=0; i<21; i++)
+		Sprites[2 * 64 + 3 * i] = 0xf0;
 	mmap_set(MMAP_NO_ROM);
+
+	spr_init(Screen);
 
 	vic_setmode(VICM_TEXT, Screen, Hires);
 
@@ -969,7 +991,7 @@ int main(void)
 
 	effects[0] = basefx;
 	neffects = 1;
-	
+
 	showfxs();		
 	showmenu();
 	hires_draw_start();
@@ -978,6 +1000,12 @@ int main(void)
 	memset(Screen + 12 * 40, 0x70, 160);
 	memset(Screen + 16 * 40, 0xe0, 160);
 
+	spr_set(0, true, 0, 0, 64, VCOL_WHITE, false, false, false);
+	spr_set(1, true, 0, 0, 66, VCOL_BLUE, false, false, true);
+	spr_set(2, true, 0, 0, 66, VCOL_BLUE, false, false, true);
+
+	vic.spr_priority = 0x07;
+
 	bool	markset = false;
 	for(;;)
 	{
@@ -985,17 +1013,26 @@ int main(void)
 		char * curc = Color + 40 + 40 * cursorY + cursorX;
 
 		if (cursorY < 10 || cursorX >= 20)
-			*curp |= 0x80;
+		{
+			spr_move(0, 24 + 8 * cursorX, 49 + 8 + 8 * cursorY);
+			spr_image(0, 64 + ((csr_cnt >> 4) & 1));
+		}
 		else
 		{
+			spr_move(0, 0, 0);
 			for(char i=0; i<4; i++)
 				curc[i] = VCOL_YELLOW;
 		}
 
+		vic.color_border = VCOL_ORANGE;
 		hires_draw_tick();
+		vic.color_border = VCOL_BLACK;
+
 		vic_waitBottom();
 		if (sidfx_idle(0))
 		{
+			spr_move(1, 0, 0);
+			spr_move(2, 0, 0);
 
 			if (markset)
 			{
@@ -1006,6 +1043,9 @@ int main(void)
 		}
 		else
 		{
+			spr_move(1, 24 + 4 * irq_cnt, 12 * 8 + 49);
+			spr_move(2, 24 + 4 * irq_cnt, 15 * 8 + 49);
+
 			char sx = (neffects - sidfx_cnt(0)) * 8 + 49;
 			if (!markset)
 			{
@@ -1022,7 +1062,7 @@ int main(void)
 		}
 
 		if (cursorY < 10 || cursorX >= 20)
-			*curp &= ~0x80;
+			;
 		else
 		{
 			for(char i=0; i<4; i++)
@@ -1031,6 +1071,8 @@ int main(void)
 
 		if (keyb_queue & KSCAN_QUAL_DOWN)
 		{
+			csr_cnt = 16;
+
 			char k = keyb_queue & KSCAN_QUAL_MASK;
 			keyb_queue = 0;
 
