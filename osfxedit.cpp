@@ -710,7 +710,7 @@ struct VirtualSID
 }	vsid;
 
 // Maximum value and per frame step for ADSR emulation
-static const unsigned AMAX	= 31 * 256;
+static const unsigned AMAX	= 32 * 256 - 1;
 static const unsigned TSTEP = 20; // ms/frame
 static const unsigned ASTEP = (unsigned long)AMAX * TSTEP / 4;
 
@@ -727,6 +727,14 @@ static const unsigned DecayStep[16] = {
 	ASTEP / 114,   ASTEP / 168,  ASTEP / 204, ASTEP / 240,
 	ASTEP / 300,   ASTEP / 750,  ASTEP / 1500, ASTEP / 2400,
 	ASTEP / 3000,   ASTEP / 9000,  ASTEP / 15000, ASTEP / 24000
+};
+
+static const char Count2Level[256] = {
+	#for (i, 256) exp(i / 54.0) / exp(255.0 / 54.0) * 31.0,
+};
+
+static const char Sustain2Count[16] = {
+	#for (i, 16) log(i * exp(255.0 / 54.0) / 15.0) * 54.0,
 };
 
 
@@ -761,7 +769,7 @@ void vsid_advance(void)
 	case PHASE_DECAY:
 		{
 			// Decrease channel power during decay phase
-			unsigned sus = (AMAX >> 4) * (vsid.susrel >> 4);
+			unsigned sus = Sustain2Count[vsid.susrel >> 4] << 5;
 			unsigned dec = DecayStep[vsid.attdec & 0x0f];
 
 			if (vsid.adsr > sus + dec)
@@ -925,7 +933,10 @@ void hires_draw_tick(void)
 			{
 				char j = i + 4 * n;
 				vsid_advance();
-				ady[j] = 31 - (vsid.adsr >> 8);
+				if (vsid.phase == PHASE_ATTACK)
+					ady[j] = 31 - (vsid.adsr >> 8);
+				else
+					ady[j] = 31 - Count2Level[vsid.adsr >> 5];
 				fry[j] = 31 - binlog32[vsid.freq >> 8];
 			}
 		}
