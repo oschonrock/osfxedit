@@ -800,24 +800,18 @@ void vsid_advance(void)
 
 void hires_bar(char * dp, const char * ady)
 {
-	char k = 0;
-	for(char i=0; i<32; i++)
-	{
-		char c = 0;
-		for(char j=0; j<8; j++)
+	char c = 0;
+	for(char i=0; i<4; i++)
+	{		
+		for(char j=0; j<8; j+=2)
 		{
-			if (i >= ady[j])
-				c |= (128 >> j);
+			c |= ady[j];
+			dp[j] = c;
+			c |= ady[j + 1];
+			dp[j + 1] = c ^ 0x22;
 		}
-		if (i & 1)
-			c ^= 0x22;
-		dp[k] = c;
-		k++;
-		if (k == 8)
-		{
-			dp += 320;
-			k = 0;
-		}
+		dp += 320;
+		ady += 8;
 	}
 }
 
@@ -838,10 +832,13 @@ void hires_draw_start(void)
 
 void hires_draw_tick(void)
 {
-	char ady[8], fry[8];
+	char ady[32], fry[32];
 
 	if (vsid.tick < 40)
 	{
+		for(char i=0; i<32; i++)
+			ady[i] = fry[i] = 0;
+
 		for(char n=0; n<2; n++)
 		{
 			const SIDFX	*	com = effects + vsid.pos;
@@ -934,10 +931,10 @@ void hires_draw_tick(void)
 				char j = i + 4 * n;
 				vsid_advance();
 				if (vsid.phase == PHASE_ATTACK)
-					ady[j] = 31 - (vsid.adsr >> 8);
+					ady[31 - (vsid.adsr >> 8)] |= 128 >> j;
 				else
-					ady[j] = 31 - Count2Level[vsid.adsr >> 5];
-				fry[j] = 31 - binlog32[vsid.freq >> 8];
+					ady[31 - Count2Level[vsid.adsr >> 5]] |= 128 >> j;
+				fry[31 - binlog32[vsid.freq >> 8]] |= 128 >> j;
 			}
 		}
 
@@ -1036,6 +1033,8 @@ int main(void)
 		}
 
 		vic.color_border = VCOL_ORANGE;
+		hires_draw_tick();
+		hires_draw_tick();
 		hires_draw_tick();
 		vic.color_border = VCOL_BLACK;
 
