@@ -108,7 +108,7 @@ char	neffects = 1;
 
 const char SidHead[] = S"  TSRNG FREQ  PWM  ADSR DFREQ DPWM T1 T0";
 const char SidRow[]  = S"# TSRNG 00000 0000 0000 00000 0000 00 00";
-const char MenuRow[] = S"LOAD SAVE NEW  UNDO [..................]";
+const char MenuRow[] = S"LOAD SAVE NEW  UNDO [..............]    ";
 
 const char HexDigit[] = S"0123456789ABCDEF";
 
@@ -308,7 +308,7 @@ void edit_filename(char * fn)
 {
 	char * dp = Screen + 11 * 40;
 	char i = 0;
-	while (dp[21 + i] != '.')
+	while (dp[21 + i] != S'.' && dp[21 + i] != S']')
 	{
 		char ch = dp[21 + i];
 		if (ch >= '0' && ch <= '9' || ch == '-')
@@ -450,7 +450,7 @@ void edit_menu(char k)
 			cursorX += 5;
 		else if (cursorX == 15)
 			cursorX = 21;
-		else if (cursorX < 38 && menup[cursorX] != '.')
+		else if (cursorX < 34 && menup[cursorX] != '.')
 			cursorX++;
 		break;
 	case KSCAN_CSR_RIGHT | KSCAN_QUAL_SHIFT:
@@ -489,7 +489,7 @@ void edit_menu(char k)
 		if (cursorX > 21)
 		{
 			cursorX--;
-			for(char i=cursorX; i<38; i++)
+			for(char i=cursorX; i<34; i++)
 				menup[i] = menup[i + 1];
 			menup[38] = '.';
 		}
@@ -509,7 +509,7 @@ void edit_menu(char k)
 				else if (ch >= 'A' && ch <= 'Z')
 					ch -= 'A' - S'A';
 
-				for(char i=38; i>=cursorX; i--)
+				for(char i=33; i>=cursorX; i--)
 					menup[i + 1] = menup[i];
 				menup[cursorX] = ch;
 				if (cursorX < 38)
@@ -1128,7 +1128,7 @@ int main(void)
 						cursorX = cursorX / 5 * 5;
 					else
 					{
-						while (menup[cursorX - 1] == '.')
+						while (cursorX > 34 || menup[cursorX - 1] == '.')
 							cursorX--;
 					}
 				}
