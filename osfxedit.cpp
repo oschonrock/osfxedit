@@ -11,11 +11,13 @@
 #include <string.h>
 #include <math.h>
 
-static char * const Screen = (char *)0x4000;
-static char * const Sprites = (char *)0x5000;
-static char * const Hires = (char *)0x6000;
-static char * const Font = (char*)0xd000;
+static char * const Screen = (char *)0x8000;
+static char * const Sprites = (char *)0x8500;
+static char * const Hires = (char *)0xa000;
+static char * const ROMFont = (char*)0xd000;
 static char * const Color = (char *)0xd800;
+
+static const char sprite_img_base = ((Sprites - Screen) / 64);
 
 static const char voice = 2; // can sample envelope on voice 3 if needed for validation
 
@@ -974,7 +976,7 @@ int main(void)
 	cia_init();
 
 	mmap_set(MMAP_CHAR_ROM);
-	memcpy(Hires, Font, 0x0800);
+	memcpy(Hires, ROMFont, 0x0800); // use redundant 1st half of hires to store font
 	mmap_set(MMAP_NO_BASIC);
 	memcpy((char*)0xe000, (char*)0xe000, 0x2000); // copy ROM to RAM
 	mmap_set(MMAP_NO_ROM);
@@ -1039,9 +1041,9 @@ int main(void)
 	memset(Screen + 12 * 40, 0x70, 160);
 	memset(Screen + 16 * 40, 0xe0, 160);
 
-	spr_set(0, true, 0, 0, 64, VCOL_WHITE, false, false, false);
-	spr_set(1, true, 0, 0, 66, VCOL_BLUE, false, false, true);
-	spr_set(2, true, 0, 0, 66, VCOL_BLUE, false, false, true);
+	spr_set(0, true, 0, 0, sprite_img_base + 0, VCOL_WHITE, false, false, false);
+	spr_set(1, true, 0, 0, sprite_img_base + 2, VCOL_BLUE, false, false, true);
+	spr_set(2, true, 0, 0, sprite_img_base + 2, VCOL_BLUE, false, false, true);
 
 	vic.spr_priority = 0x07;
 
@@ -1054,7 +1056,7 @@ int main(void)
 		if (cursorY < 10 || cursorX >= 20)
 		{
 			spr_move(0, 24 + 8 * cursorX, 49 + 8 + 8 * cursorY);
-			spr_image(0, 64 + ((csr_cnt >> 4) & 1));
+			spr_image(0, sprite_img_base + ((csr_cnt >> 4) & 1));
 		}
 		else
 		{
