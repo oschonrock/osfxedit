@@ -1,21 +1,38 @@
+#include <c64/kernalio.h>
 #include <c64/sid.h>
 #include <c64/keyboard.h>
 #include <c64/memmap.h>
 #include <c64/cia.h>
 #include <c64/vic.h>
 #include <c64/rasterirq.h>
-#include <c64/iecbus.h>
 #include <c64/sprites.h>
 #include <audio/sidfx.h>
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
 
-static char * const Screen = (char *)0xc000;
-static char * const Hires = (char *)0xe000;
+static char * const Screen = (char *)0x4000;
+static char * const Sprites = (char *)0x5000;
+static char * const Hires = (char *)0x6000;
+static char * const Font = (char*)0xd000;
 static char * const Color = (char *)0xd800;
-static char * const Font = (char *)0xd000;
-static char * const Sprites = (char *)0xd000;
+
+static const char voice = 2; // can sample envelope on voice 3 if needed for validation
+
+#ifdef OSFXEDIT_USE_NMI
+// define this to enable a non-50Hz rate of calling sfx_loop()
+const char nmi_start_rasterline = 105;
+#ifdef OSFXEDIT_NMI_CYCLES
+const unsigned nmi_cycles = OSFXEDIT_NMI_CYCLES;
+#else
+// pico8 runs at 22,050 / 183 = 120.491803279 notes/second or 8.29932 ms/note
+// this must be our music and SFX tick rate
+// on a PAL C64 that is 985248Hz / 120.491803279 = 8176.89 cycles ~ 8177cycles
+// modified to 8189 to stablise against the raster beam - no rolling
+// adjust as necessary
+const unsigned nmi_cycles = 8189;
+#endif
+#endif
 
 char keyb_queue, keyb_repeat;
 char csr_cnt;
@@ -23,14 +40,16 @@ char irq_cnt;
 
 __interrupt void isr(void)
 {
-	irq_cnt++;
 	csr_cnt++;
+#ifndef OSFXEDIT_USE_NMI
+	irq_cnt++;
+	// vic.color_border = VCOL_LT_BLUE;
+	sidfx_loop_2();
+#endif
 
-	vic.color_border = VCOL_YELLOW;
-	sidfx_loop();
-	vic.color_border = VCOL_LT_BLUE;
+	// vic.color_border = VCOL_LT_BLUE;
 	keyb_poll();
-	vic.color_border = VCOL_ORANGE;
+	// vic.color_border = VCOL_ORANGE;
 
 	if (!keyb_queue)
 	{
@@ -56,8 +75,18 @@ __interrupt void isr(void)
 			keyb_repeat = 20;
 		}
 	}
-	vic.color_border = VCOL_BLACK;
+	// vic.color_border = VCOL_BLACK;
 }
+
+#ifdef OSFXEDIT_USE_NMI
+__hwinterrupt void nmi_isr(void)
+{
+  volatile char dummy = cia2.icr; // ack nmi int
+  __asm {cli} // allow normal interrupts
+  irq_cnt++;
+  sidfx_loop_2();
+}
+#endif
 
 RIRQCode	rirq_isr, rirq_mark0, rirq_mark1, rirq_bitmap;
 
@@ -73,7 +102,7 @@ const SIDFX basefx = {
 
 SIDFX	effects[10];
 
-char 	neffects = 1;
+char	neffects = 1;
 
 const char SidHead[] = S"  TSRNG FREQ  PWM  ADSR DFREQ DPWM T1 T0";
 const char SidRow[]  = S"# TSRNG 00000 0000 0000 00000 0000 00 00";
@@ -289,24 +318,16 @@ void edit_filename(char * fn)
 	fn[i] = 0;
 }
 
-char save_drive = 9;
-
-char msg_buffer[40];
-
-void iec_read_status(void)
-{
-	iec_talk(save_drive, 15);
-	char i = 0;
-	while (iec_status == IEC_OK)
-		msg_buffer[i++] = iec_read();
-	msg_buffer[i] = 0;
-	iec_untalk();
-}
+char drive = 9;
+char filenum   = 2;
+char filechannel = 2;
 
 void edit_load(void)
 {
 	rirq_stop();
-
+#ifdef OSFXEDIT_USE_NMI
+	cia2.icr = 0b00000001; // disable NMI
+#endif
 	bool ok = false;
 
 	char fname[24];
@@ -315,30 +336,31 @@ void edit_load(void)
 	edit_filename(fname);
 	strcat(fname, ",P,R");
 
-	iec_open(save_drive, 2, fname);
-	iec_talk(save_drive, 2);
+	krnio_setnam(fname);
+	krnio_open(filenum, drive, filechannel);
 
 	// Magic code and save file version
-	char v = iec_read();
-	if (iec_status == IEC_OK && v >= 0xb3)
-	{
-		neffects = iec_read();
-		iec_read_bytes((char *)effects, sizeof(SIDFX) * neffects);
-		ok = true;
+	char v = krnio_getch(filenum);
+	if (krnio_status() == KRNIO_OK && v >= 0xb3) {
+	  neffects = krnio_getch(filenum);
+	  krnio_read(filenum, (char*)effects, sizeof(SIDFX) * neffects);
+	  ok = true;
 	}
 
-	iec_untalk();
-	iec_close(save_drive, 2);
+	krnio_close(filenum);
 
-	if (!ok)
-		iec_read_status();
-
+#ifdef OSFXEDIT_USE_NMI
+	cia2.icr = 0b10000001; // enable NMI
+#endif
 	rirq_start();
 }
 
 void edit_save(void)
 {
 	rirq_stop();
+#ifdef OSFXEDIT_USE_NMI
+	cia2.icr = 0b00000001; // disable NMI
+#endif
 
 	bool ok = false;
 
@@ -348,21 +370,20 @@ void edit_save(void)
 	edit_filename(fname + 3);
 	strcat(fname, ",P,W");
 
-	iec_open(save_drive, 2, fname);
-	iec_listen(save_drive, 2);
+	krnio_setnam(fname);
+	krnio_open(filenum, drive, filechannel);
 
 	// Magic code and save file version
-	iec_write(0xb3);
-	if (iec_status < IEC_ERROR)
+	krnio_putch(2, 0xb3);
+	if (krnio_status() == KRNIO_OK)
 	{
-		iec_write(neffects);
-		iec_write_bytes((char *)effects, sizeof(SIDFX) * neffects);
-		if (iec_status < IEC_ERROR)
+		krnio_putch(filenum, neffects);
+		krnio_write(filenum, (char *)effects, sizeof(SIDFX) * neffects);
+		if (krnio_status() == KRNIO_OK)
 			ok = true;
 	}
 
-	iec_unlisten();
-	iec_close(save_drive, 2);
+	krnio_close(filenum);
 
 	if (ok)
 	{
@@ -370,32 +391,31 @@ void edit_save(void)
 		edit_filename(fname + 3);
 		strcat(fname, p".c" ",P,W");
 
-		iec_open(save_drive, 2, fname);
-		iec_listen(save_drive, 2);
+		krnio_setnam(fname);
+		krnio_open(filenum, drive, filechannel);
 
 		edit_filename(fname);
 
 		char buffer[200];
-		sprintf(buffer, "static const SIDFX SFX_%s[] = {\n", fname);
-		iec_write_bytes(buffer, strlen(buffer));
+		int len = sprintf(buffer, "static const SIDFX SFX_%s[] = {\n", fname);
+		krnio_write(filenum, buffer, len);
 
 		for(char i=0; i<neffects; i++)
 		{
 			const SIDFX & s(effects[i]);
-			sprintf(buffer, "\t{%u, %u, 0x%02x, 0x%02x, 0x%02x, %d, %d, %d, %d, 0},\n",
+			len = sprintf(buffer, "\t{%u, %u, 0x%02x, 0x%02x, 0x%02x, %d, %d, %d, %d, 0},\n",
 				s.freq, s.pwm, s.ctrl, s.attdec, s.susrel, s.dfreq, s.dpwm, s.time1, s.time0);
-			iec_write_bytes(buffer, strlen(buffer));
+			krnio_write(filenum, buffer, len);
 		}
-		sprintf(buffer, "};\n");
-		iec_write_bytes(buffer, strlen(buffer));
+		len = sprintf(buffer, "};\n");
+		krnio_write(filenum, buffer, len);
 
-		iec_unlisten();
-		iec_close(save_drive, 2);
+		krnio_close(filenum);
 	}
 
-	if (!ok)
-		iec_read_status();
-
+#ifdef OSFXEDIT_USE_NMI
+	cia2.icr = 0b10000001; // enable NMI
+#endif
 	rirq_start();
 }
 
@@ -538,6 +558,7 @@ void edit_effects(char k)
 		break;
 	case KSCAN_PLUS:
 	case KSCAN_DOT:
+	case KSCAN_EQUAL:
 		switch (cursorX)
 		{
 		case 0:
@@ -668,8 +689,8 @@ void edit_effects(char k)
 
 	if (restart)
 	{
-		sidfx_stop(0);
-		sidfx_play(0, effects, neffects);
+		sidfx_stop(voice);
+		sidfx_play(voice, effects, neffects);
 		irq_cnt = 0;
 	}
 
@@ -954,6 +975,9 @@ int main(void)
 
 	mmap_set(MMAP_CHAR_ROM);
 	memcpy(Hires, Font, 0x0800);
+	mmap_set(MMAP_NO_BASIC);
+	memcpy((char*)0xe000, (char*)0xe000, 0x2000); // copy ROM to RAM
+	mmap_set(MMAP_NO_ROM);
 
 	memset(Sprites, 0, 256);
 	for(char i=0; i<9; i++)
@@ -961,11 +985,18 @@ int main(void)
 	Sprites[1 * 64 + 3 * 8] = 0xff;
 	for(char i=0; i<21; i++)
 		Sprites[2 * 64 + 3 * i] = 0xf0;
-	mmap_set(MMAP_NO_ROM);
 
 	spr_init(Screen);
 
 	vic_setmode(VICM_TEXT, Screen, Hires);
+
+#ifdef OSFXEDIT_USE_NMI
+	*(void**)0xfffa = nmi_isr;
+	vic_waitLine(nmi_start_rasterline); // start in consistent place to avoid flicker at hires transition
+	cia2.ta	 = nmi_cycles;
+	cia2.icr = 0b10000001;
+	cia2.cra = 0b00010001;
+#endif
 
 	sidfx_init();
 
@@ -1032,14 +1063,14 @@ int main(void)
 				curc[i] = VCOL_YELLOW;
 		}
 
-		vic.color_border = VCOL_ORANGE;
+		// vic.color_border = VCOL_ORANGE;
 		hires_draw_tick();
 		hires_draw_tick();
 		hires_draw_tick();
-		vic.color_border = VCOL_BLACK;
+		// vic.color_border = VCOL_BLACK;
 
 		vic_waitBottom();
-		if (sidfx_idle(0))
+		if (sidfx_idle(voice))
 		{
 			spr_move(1, 0, 0);
 			spr_move(2, 0, 0);
@@ -1056,7 +1087,7 @@ int main(void)
 			spr_move(1, 24 + 4 * irq_cnt, 12 * 8 + 49);
 			spr_move(2, 24 + 4 * irq_cnt, 15 * 8 + 49);
 
-			char sx = (neffects - sidfx_cnt(0)) * 8 + 49;
+			char sx = (neffects - sidfx_cnt(voice)) * 8 + 49;
 			if (!markset)
 			{
 				rirq_set(1, sx, &rirq_mark0); 
