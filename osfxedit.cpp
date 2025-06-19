@@ -1000,7 +1000,7 @@ int main(void)
 
 	sidfx_init();
 
-	rirq_init_io();
+	rirq_init_kernal();
 
 	rirq_build(&rirq_isr, 2);
 	rirq_write(&rirq_isr, 0, &vic.ctrl1, VIC_CTRL1_DEN | VIC_CTRL1_RSEL | 3);
