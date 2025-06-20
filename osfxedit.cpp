@@ -428,30 +428,40 @@ void edit_load(void)
 	strcat(fname, ",P,R");
 
 	krnio_setnam(fname);
-	krnio_open(filenum, drive, filechannel);
-
-	// Magic code and save file version
-	char v = krnio_getch(filenum);
-	if (krnio_status() == KRNIO_OK)
+	if (krnio_open(filenum, drive, filechannel))
 	{
-		if (v <= 0xb3)
+
+		// Magic code and save file version
+		char v = krnio_getch(filenum);
+        auto status = krnio_status();
+		if (status == KRNIO_OK)
 		{
-			neffects = krnio_getch(filenum);
-			krnio_read(filenum, (char*)effects, sizeof(SIDFX) * neffects);
-			ok = true;
+			if (v <= 0xb3)
+			{
+				neffects = krnio_getch(filenum);
+				krnio_read(filenum, (char*)effects, sizeof(SIDFX) * neffects);
+				ok = true;
+			}
+			else
+			{
+				show_msg(S"incorrect file version");
+			}
+		}
+		else if (status & KRNIO_EOF)
+        {
+			show_msg(S"could not read from file");
 		}
 		else
 		{
-			show_msg(S"incorrect file version");
+			read_drive_status();
+			show_msg(drive_status, true);
 		}
+		krnio_close(filenum);
 	}
 	else
 	{
-        read_drive_status();
-        show_msg(drive_status, true);
+		show_msg(S"could not open file");
 	}
-
-	krnio_close(filenum);
 
 #ifdef OSFXEDIT_USE_NMI
 	cia2.icr = 0b10000001; // enable NMI
