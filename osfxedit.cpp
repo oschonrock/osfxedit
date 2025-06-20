@@ -1138,7 +1138,7 @@ int main(void)
 		}
 		else
 		{
-			if (irq_cnt < 75)
+			if (irq_cnt < 100)
 			{
 				spr_move(1, 24 + 4 * irq_cnt, (max_neffects + 2) * 8 + 49);
 				spr_move(2, 24 + 4 * irq_cnt, (max_neffects + 2 + 3) * 8 + 49);
