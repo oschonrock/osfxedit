@@ -573,8 +573,8 @@ void edit_effects(char k)
 			 	{
                                         for(char i=neffects; i>cursorY; i--) {
 				 		effects[i] = effects[i - 1];
-                                                redraw_all = true;
                                         }
+                                        redraw_all = true;
 			 	}
 
 			 	neffects++; 
@@ -633,6 +633,7 @@ void edit_effects(char k)
 				neffects--;
 				for(char i=cursorY; i<neffects; i++)
 					effects[i] = effects[i + 1];						
+                                redraw_all = true;
 			}
 			break;
 
@@ -742,7 +743,11 @@ struct VirtualSID
 
 // Maximum value and per frame step for ADSR emulation
 static const unsigned AMAX	= 32 * 256 - 1;
+#ifdef OSFXEDIT_USE_NMI
+static const unsigned TSTEP = nmi_cycles / 1000; // ms/frame
+#else
 static const unsigned TSTEP = 20; // ms/frame
+#endif
 static const unsigned ASTEP = (unsigned long)AMAX * TSTEP / 4;
 
 // ADSR constants
