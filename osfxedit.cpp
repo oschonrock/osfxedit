@@ -21,9 +21,11 @@ static const char sprite_img_base = ((Sprites - Screen) / 64);
 
 static const char voice = 2; // can sample envelope on voice 3 if needed for validation
 
+static const char max_neffects = 15;
+
 #ifdef OSFXEDIT_USE_NMI
 // define this to enable a non-50Hz rate of calling sfx_loop()
-const char nmi_start_rasterline = 105;
+const char nmi_start_rasterline = 100;
 #ifdef OSFXEDIT_NMI_CYCLES
 const unsigned nmi_cycles = OSFXEDIT_NMI_CYCLES;
 #else
@@ -154,7 +156,7 @@ const SIDFX basefx = {
 	0
 };
 
-SIDFX	effects[10];
+SIDFX	effects[max_neffects];
 
 char	neffects = 1;
 
@@ -178,8 +180,8 @@ char cursorX, cursorY;
 
 void showmenu(void)
 {
-	char * dp = Screen + 11 * 40;
-	char * cp = Color + 11 * 40;
+	char* dp = Screen + (max_neffects + 1) * 40;
+	char* cp = Color + (max_neffects + 1) * 40;
 
 	for(char i=0; i<40; i++)
 	{
@@ -204,7 +206,7 @@ void showfxs_row(char n)
 	if (n < neffects)
 	{
 		char fs[6];
-		dp[0] = '0' + n;
+		dp[0] = n < 10 ? '0' + n : S'a' + n - 10;
 		cp[0] = VCOL_YELLOW;
 
 		SIDFX	&	s = effects[n];
@@ -299,7 +301,7 @@ void showfxs(void)
 		cp[i] = VCOL_LT_BLUE;
 	}
 
-	for(char i=0; i<10; i++)
+	for(char i=0; i<max_neffects; i++)
 		showfxs_row(i);
 }
 
@@ -358,7 +360,7 @@ void check_digit(SIDFX & s, char d)
 
 void edit_filename(char * fn)
 {
-	char * dp = Screen + 11 * 40;
+	char * dp = Screen + (max_neffects + 1) * 40;
 	char i = 0;
 	while (dp[21 + i] != S'.' && dp[21 + i] != S']')
 	{
@@ -489,7 +491,7 @@ void edit_undo(void)
 
 }
 
-char * menup = Screen + 11 * 40;
+char * menup = Screen + (max_neffects + 1) * 40;
 
 void edit_menu(char k)
 {
@@ -497,7 +499,7 @@ void edit_menu(char k)
 	switch(k)
 	{
 	case KSCAN_CSR_DOWN | KSCAN_QUAL_SHIFT:
-		if (neffects < 10)
+		if (neffects < max_neffects)
 			cursorY = neffects;
 		else
 			cursorY = 9;
@@ -604,7 +606,7 @@ void edit_effects(char k)
 		if (cursorY < neffects)
 			cursorY++;
 		else
-			cursorY = 10;
+			cursorY = max_neffects;
 		break;
 	case KSCAN_CSR_DOWN | KSCAN_QUAL_SHIFT:
 		if (cursorY > 0)
@@ -627,7 +629,7 @@ void edit_effects(char k)
 		switch (cursorX)
 		{
 		case 0:
-			 if (neffects < 10)
+			 if (neffects < max_neffects)
 			 {
 			 	if (cursorY == neffects)
 			 		effects[neffects] = basefx;
@@ -1036,7 +1038,7 @@ void hires_draw_tick(void)
 			}
 		}
 
-		char * dp = Hires + 320 * 12 + 8 * vsid.tick;
+		char * dp = Hires + 320 * (max_neffects + 2) + 8 * vsid.tick;
 		hires_bar(dp, ady);
 		dp += 320 * 4;
 		hires_bar(dp, fry);	
@@ -1093,7 +1095,7 @@ int main(void)
 	rirq_build(&rirq_bitmap, 2);
 	rirq_delay(&rirq_bitmap, 10);
 	rirq_write(&rirq_bitmap, 1, &vic.ctrl1, VIC_CTRL1_DEN | VIC_CTRL1_RSEL | VIC_CTRL1_BMM | 3);
-	rirq_set(3, 49 + 8 * 12, &rirq_bitmap);
+	rirq_set(3, 49 + 8 * (max_neffects + 2), &rirq_bitmap);
 
 	rirq_sort();
 	rirq_start();
@@ -1112,9 +1114,9 @@ int main(void)
 	showmenu();
 	hires_draw_start();
 
-	memset(Hires + 12 * 320, 0, 13 * 320);
-	memset(Screen + 12 * 40, 0x70, 160);
-	memset(Screen + 16 * 40, 0xe0, 160);
+	memset(Hires + (max_neffects + 2) * 320, 0, 13 * 320);
+	memset(Screen + (max_neffects + 2) * 40, 0x70, 160);
+	memset(Screen + (max_neffects + 2 + 4) * 40, 0xe0, 160);
 
 	spr_set(0, true, 0, 0, sprite_img_base + 0, VCOL_WHITE, false, false, false);
 	spr_set(1, true, 0, 0, sprite_img_base + 2, VCOL_BLUE, false, false, true);
@@ -1128,7 +1130,7 @@ int main(void)
 		char * curp = Screen + 40 + 40 * cursorY + cursorX;
 		char * curc = Color + 40 + 40 * cursorY + cursorX;
 
-		if (cursorY < 10 || cursorX >= 20)
+		if (cursorY < max_neffects || cursorX >= 20)
 		{
 			spr_move(0, 24 + 8 * cursorX, 49 + 8 + 8 * cursorY);
 			spr_image(0, sprite_img_base + ((csr_cnt >> 4) & 1));
@@ -1161,8 +1163,8 @@ int main(void)
 		}
 		else
 		{
-			spr_move(1, 24 + 4 * irq_cnt, 12 * 8 + 49);
-			spr_move(2, 24 + 4 * irq_cnt, 15 * 8 + 49);
+			spr_move(1, 24 + 4 * irq_cnt, (max_neffects + 2) * 8 + 49);
+			spr_move(2, 24 + 4 * irq_cnt, (max_neffects + 2 + 3) * 8 + 49);
 
 			char sx = (neffects - sidfx_cnt(voice)) * 8 + 49;
 			if (!markset)
@@ -1179,7 +1181,7 @@ int main(void)
 			rirq_sort();
 		}
 
-		if (cursorY < 10 || cursorX >= 20)
+		if (cursorY < max_neffects || cursorX >= 20)
 			;
 		else
 		{
@@ -1194,10 +1196,10 @@ int main(void)
 			char k = keyb_queue & KSCAN_QUAL_MASK;
 			keyb_queue = 0;
 
-			if (cursorY < 10)
+			if (cursorY < max_neffects)
 			{
 				edit_effects(k);
-				if (cursorY == 10)
+				if (cursorY == max_neffects)
 				{
 					if (cursorX < 20)
 						cursorX = cursorX / 5 * 5;
