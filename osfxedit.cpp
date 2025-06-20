@@ -81,13 +81,65 @@ __interrupt void isr(void)
 }
 
 #ifdef OSFXEDIT_USE_NMI
-__hwinterrupt void nmi_isr(void)
-{
-  volatile char dummy = cia2.icr; // ack nmi int
-  __asm {cli} // allow normal interrupts
+void nmi_isr(void) {
+  __asm {
+        pha
+        txa
+        pha
+        tya
+        pha
+        lda $43
+        pha
+        lda $44
+        pha
+        lda $45
+        pha
+        lda $46
+        pha
+        lda $47
+        pha
+        lda $48
+        pha
+
+        lda $dd0d    // cia2.icr ack nmi int
+
+        tsx
+        lda $010a,x // peek at status register before NMI occured: 9 pushes above + 1 + x
+        and #$04    // test "I" bit
+        bne go_isr  // if interrupts were already disabled before NMI occured
+                    // then don't re-enable them, as that will likely cause a 2nd re-entrant interrupt
+
+        cli         // allow normal interrupts
+
+go_isr:
+  }
+
   irq_cnt++;
   sidfx_loop_2();
+
+  __asm {
+
+        pla
+        sta $48
+        pla
+        sta $47
+        pla
+        sta $46
+        pla
+        sta $45
+        pla
+        sta $44
+        pla
+        sta $43
+        pla
+        tay
+        pla
+        tax
+        pla
+        rti
+  }
 }
+
 #endif
 
 RIRQCode	rirq_isr, rirq_mark0, rirq_mark1, rirq_bitmap;
