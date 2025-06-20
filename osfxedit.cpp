@@ -520,14 +520,19 @@ void edit_menu(char k)
 			edit_load();
 			showfxs();
 			hires_draw_start();
+                        cursorY = neffects;
 			break;
 		case 5:
 			edit_save();
+                        cursorY = neffects;
+			cursorX = 0;
 			break;
 		case 10:
 			edit_new();
 			showfxs();
 			hires_draw_start();
+                        cursorY = neffects;
+			cursorX = 0;
 			break;
 		case 15:
 			edit_undo();
