@@ -434,7 +434,7 @@ void edit_load(void)
 	char v = krnio_getch(filenum);
 	if (krnio_status() == KRNIO_OK)
 	{
-		if (v < 0xb3)
+		if (v <= 0xb3)
 		{
 			neffects = krnio_getch(filenum);
 			krnio_read(filenum, (char*)effects, sizeof(SIDFX) * neffects);
