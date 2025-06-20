@@ -379,6 +379,8 @@ char filechannel = 2;
 void edit_load(void)
 {
 	rirq_stop();
+	vic.intr_enable = 0;
+        
 #ifdef OSFXEDIT_USE_NMI
 	cia2.icr = 0b00000001; // disable NMI
 #endif
@@ -406,12 +408,14 @@ void edit_load(void)
 #ifdef OSFXEDIT_USE_NMI
 	cia2.icr = 0b10000001; // enable NMI
 #endif
+	vic.intr_enable = 1;
 	rirq_start();
 }
 
 void edit_save(void)
 {
 	rirq_stop();
+	vic.intr_enable = 0;
 #ifdef OSFXEDIT_USE_NMI
 	cia2.icr = 0b00000001; // disable NMI
 #endif
@@ -470,6 +474,7 @@ void edit_save(void)
 #ifdef OSFXEDIT_USE_NMI
 	cia2.icr = 0b10000001; // enable NMI
 #endif
+	vic.intr_enable = 1;
 	rirq_start();
 }
 
