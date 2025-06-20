@@ -1138,8 +1138,16 @@ int main(void)
 		}
 		else
 		{
-			spr_move(1, 24 + 4 * irq_cnt, (max_neffects + 2) * 8 + 49);
-			spr_move(2, 24 + 4 * irq_cnt, (max_neffects + 2 + 3) * 8 + 49);
+			if (irq_cnt < 75)
+			{
+				spr_move(1, 24 + 4 * irq_cnt, (max_neffects + 2) * 8 + 49);
+				spr_move(2, 24 + 4 * irq_cnt, (max_neffects + 2 + 3) * 8 + 49);
+			}
+			else
+			{
+				spr_move(1, 0, 0);
+				spr_move(2, 0, 0);
+			}
 
 			char sx = (neffects - sidfx_cnt(voice)) * 8 + 49;
 			if (!markset)
