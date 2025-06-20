@@ -38,13 +38,39 @@ const unsigned nmi_cycles = 8189;
 #endif
 #endif
 
+char menubuf[40];
+
+// for use before message displaye, mainly for filename
+void save_menu(void)
+{
+	char* dp = Screen + (max_neffects + 1) * 40;
+	for (char i = 0; i < 40; i++) menubuf[i] = dp[i];
+}
+
+// for use before message displaye, mainly for filename
+void restore_menu(void)
+{
+	char* dp = Screen + (max_neffects + 1) * 40;
+	char* cp = Color + (max_neffects + 1) * 40;
+	for (char i = 0; i < 40; i++)
+	{
+		dp[i] = menubuf[i];
+		cp[i] = VCOL_LT_BLUE;
+	}
+}
+
 char keyb_queue, keyb_repeat;
 char csr_cnt;
 char irq_cnt;
+char msg_cnt;
 
 __interrupt void isr(void)
 {
 	csr_cnt++;
+    if (msg_cnt) {
+      msg_cnt--;
+      if (msg_cnt == 0) restore_menu();
+    }
 #ifndef OSFXEDIT_USE_NMI
 	irq_cnt++;
 	// vic.color_border = VCOL_LT_BLUE;
@@ -349,9 +375,41 @@ void edit_filename(char * fn)
 	fn[i] = 0;
 }
 
-char drive = 9;
+void show_msg(const char* msg, bool petscii = false)
+{
+	save_menu();
+	char* sp      = Screen + (max_neffects + 1) * 40;
+	char* cp      = Color + (max_neffects + 1) * 40;
+	bool  msg_end = false;
+	for (char i = 0; i < 40; i++)
+	{
+		char ch = msg[i];
+		if (!ch)
+		{
+			msg_end = true;
+		}
+		if (petscii && ch >= 64) ch -= 64;
+		sp[i] = msg_end ? S' ' : ch;
+		cp[i] = VCOL_RED;
+	}
+	msg_cnt = 100; // restore menu after 2secs
+}
+
+char drive = 8;
 char filenum   = 2;
 char filechannel = 2;
+
+char drive_status[40];
+void read_drive_status(void)
+{
+    memset(drive_status, 0, 40);
+	krnio_setnam("");
+	krnio_open(15, drive, 15);
+    char n = krnio_read(15, drive_status, 40);
+    // trim off trailing CR
+    if (n > 0 && drive_status[n-1] == 13) drive_status[n-1] = 0;
+    krnio_close(15);
+}
 
 void edit_load(void)
 {
@@ -374,10 +432,23 @@ void edit_load(void)
 
 	// Magic code and save file version
 	char v = krnio_getch(filenum);
-	if (krnio_status() == KRNIO_OK && v >= 0xb3) {
-	  neffects = krnio_getch(filenum);
-	  krnio_read(filenum, (char*)effects, sizeof(SIDFX) * neffects);
-	  ok = true;
+	if (krnio_status() == KRNIO_OK)
+	{
+		if (v < 0xb3)
+		{
+			neffects = krnio_getch(filenum);
+			krnio_read(filenum, (char*)effects, sizeof(SIDFX) * neffects);
+			ok = true;
+		}
+		else
+		{
+			show_msg(S"incorrect file version");
+		}
+	}
+	else
+	{
+        read_drive_status();
+        show_msg(drive_status, true);
 	}
 
 	krnio_close(filenum);
@@ -446,6 +517,11 @@ void edit_save(void)
 		krnio_write(filenum, buffer, len);
 
 		krnio_close(filenum);
+	}
+	else
+	{
+        read_drive_status();
+        show_msg(drive_status, true);
 	}
 
 #ifdef OSFXEDIT_USE_NMI
