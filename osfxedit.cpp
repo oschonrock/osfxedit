@@ -491,7 +491,7 @@ void edit_menu(char k)
 			cursorX--;
 			for(char i=cursorX; i<34; i++)
 				menup[i] = menup[i + 1];
-			menup[38] = '.';
+			menup[34] = '.';
 		}
 		break;
 	case KSCAN_HOME:
@@ -524,6 +524,7 @@ void edit_effects(char k)
 {
 	bool	restart = false;
 	bool	redraw = false;
+	bool	redraw_all = false;
 
 	SIDFX	&	s = effects[cursorY];
 
@@ -570,8 +571,10 @@ void edit_effects(char k)
 			 		effects[neffects] = basefx;
 			 	else
 			 	{
-				 	for(char i=neffects; i>cursorY; i--)
-				 		effects[i] = effects[i - 1];			 		
+                                        for(char i=neffects; i>cursorY; i--) {
+				 		effects[i] = effects[i - 1];
+                                                redraw_all = true;
+                                        }
 			 	}
 
 			 	neffects++; 
@@ -696,7 +699,12 @@ void edit_effects(char k)
 		irq_cnt = 0;
 	}
 
-	if (redraw)
+	if (redraw_all)
+	{
+		showfxs();
+		hires_draw_start();
+	}
+        else if (redraw)
 	{
 		showfxs_row(cursorY);		
 		hires_draw_start();
