@@ -396,7 +396,7 @@ void show_msg(const char* msg, bool petscii = false)
 }
 
 char drive = 8;
-char filenum   = 2;
+char filenum = 2;
 char filechannel = 2;
 
 char drive_status[40];
