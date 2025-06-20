@@ -83,30 +83,23 @@ __interrupt void isr(void)
 }
 
 #ifdef OSFXEDIT_USE_NMI
-void nmi_isr(void) {
+__interrupt void nmi_isr(void) {
+  irq_cnt++;
+  sidfx_loop_2();
+}
+
+void nmi_isr_stub(void) {
   __asm {
         pha
         txa
         pha
         tya
         pha
-        lda $43
-        pha
-        lda $44
-        pha
-        lda $45
-        pha
-        lda $46
-        pha
-        lda $47
-        pha
-        lda $48
-        pha
 
         lda $dd0d    // cia2.icr ack nmi int
 
         tsx
-        lda $010a,x // peek at status register before NMI occured: 9 pushes above + 1 + x
+        lda $0104,x // peek at status register before NMI occured: 3 pushes above + 1 + SP
         and #$04    // test "I" bit
         bne go_isr  // if interrupts were already disabled before NMI occured
                     // then don't re-enable them, as that will likely cause a 2nd re-entrant interrupt
@@ -114,25 +107,7 @@ void nmi_isr(void) {
         cli         // allow normal interrupts
 
 go_isr:
-  }
-
-  irq_cnt++;
-  sidfx_loop_2();
-
-  __asm {
-
-        pla
-        sta $48
-        pla
-        sta $47
-        pla
-        sta $46
-        pla
-        sta $45
-        pla
-        sta $44
-        pla
-        sta $43
+        jsr nmi_isr
         pla
         tay
         pla
@@ -1070,7 +1045,7 @@ int main(void)
 	vic_setmode(VICM_TEXT, Screen, Hires);
 
 #ifdef OSFXEDIT_USE_NMI
-	*(void**)0xfffa = nmi_isr;
+	*(void**)0xfffa = nmi_isr_stub;
 	vic_waitLine(nmi_start_rasterline); // start in consistent place to avoid flicker at hires transition
 	cia2.ta	 = nmi_cycles;
 	cia2.icr = 0b10000001;
