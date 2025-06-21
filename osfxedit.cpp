@@ -567,11 +567,6 @@ void edit_new(void)
 	effects[0] = basefx;
 }
 
-void edit_undo(void)
-{
-
-}
-
 char * menup = Screen + (max_neffects + 1) * 40;
 
 void edit_menu(char k)
