@@ -1,6 +1,6 @@
 # osfxedit
 Oscar64 sound FX editor
 
-[![Watch the video](https://raw.githubusercontent.com/username/repository/branch/path/to/thumbnail.jpg)](https://raw.githubusercontent.com/username/repository/branch/path/to/video.mp4)
+[![Demo Video](https://raw.githubusercontent.com/oschonrock/osfxedit/refs/heads/main/demo.png)](https://github.com/oschonrock/osfxedit/raw/refs/heads/main/demo.mp4)
 
 
