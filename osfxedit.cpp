@@ -1,36 +1,85 @@
+#include <c64/kernalio.h>
 #include <c64/sid.h>
 #include <c64/keyboard.h>
 #include <c64/memmap.h>
 #include <c64/cia.h>
 #include <c64/vic.h>
 #include <c64/rasterirq.h>
-#include <c64/iecbus.h>
 #include <c64/sprites.h>
 #include <audio/sidfx.h>
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
 
-static char * const Screen = (char *)0xc000;
-static char * const Hires = (char *)0xe000;
+static char * const Screen = (char *)0x8000;
+static char * const Sprites = (char *)0x8500;
+static char * const Hires = (char *)0xa000;
+static char * const ROMFont = (char*)0xd000;
 static char * const Color = (char *)0xd800;
-static char * const Font = (char *)0xd000;
-static char * const Sprites = (char *)0xd000;
+
+static const char sprite_img_base = ((Sprites - Screen) / 64);
+
+static const char voice = 2; // can sample envelope on voice 3 if needed for validation
+
+static const char max_neffects = 15;
+
+#ifdef OSFXEDIT_USE_NMI
+// define this to enable a non-50Hz rate of calling sfx_loop()
+const char nmi_start_rasterline = 100;
+#ifdef OSFXEDIT_NMI_CYCLES
+const unsigned nmi_cycles = OSFXEDIT_NMI_CYCLES;
+#else
+// pico8 runs at 22,050 / 183 = 120.491803279 notes/second or 8.29932 ms/note
+// this must be our music and SFX tick rate
+// on a PAL C64 that is 985248Hz / 120.491803279 = 8176.89 cycles ~ 8177cycles
+// modified to 8189 to stablise against the raster beam - no rolling
+// adjust as necessary
+const unsigned nmi_cycles = 8189;
+#endif
+#endif
+
+char menubuf[40];
+
+// for use before message displaye, mainly for filename
+void save_menu(void)
+{
+	char* dp = Screen + (max_neffects + 1) * 40;
+	for (char i = 0; i < 40; i++) menubuf[i] = dp[i];
+}
+
+// for use before message displaye, mainly for filename
+void restore_menu(void)
+{
+	char* dp = Screen + (max_neffects + 1) * 40;
+	char* cp = Color + (max_neffects + 1) * 40;
+	for (char i = 0; i < 40; i++)
+	{
+		dp[i] = menubuf[i];
+		cp[i] = VCOL_LT_BLUE;
+	}
+}
 
 char keyb_queue, keyb_repeat;
 char csr_cnt;
 char irq_cnt;
+char msg_cnt;
 
 __interrupt void isr(void)
 {
-	irq_cnt++;
 	csr_cnt++;
+    if (msg_cnt) {
+      msg_cnt--;
+      if (msg_cnt == 0) restore_menu();
+    }
+#ifndef OSFXEDIT_USE_NMI
+	irq_cnt++;
+	// vic.color_border = VCOL_LT_BLUE;
+	sidfx_loop_2();
+#endif
 
-	vic.color_border = VCOL_YELLOW;
-	sidfx_loop();
-	vic.color_border = VCOL_LT_BLUE;
+	// vic.color_border = VCOL_LT_BLUE;
 	keyb_poll();
-	vic.color_border = VCOL_ORANGE;
+	// vic.color_border = VCOL_ORANGE;
 
 	if (!keyb_queue)
 	{
@@ -56,8 +105,45 @@ __interrupt void isr(void)
 			keyb_repeat = 20;
 		}
 	}
-	vic.color_border = VCOL_BLACK;
+	// vic.color_border = VCOL_BLACK;
 }
+
+#ifdef OSFXEDIT_USE_NMI
+__interrupt void nmi_isr(void) {
+  irq_cnt++;
+  sidfx_loop_2();
+}
+
+void nmi_isr_stub(void) {
+  __asm {
+        pha
+        txa
+        pha
+        tya
+        pha
+
+        lda $dd0d    // cia2.icr ack nmi int
+
+        tsx
+        lda $0104,x // peek at status register before NMI occured: 3 pushes above + 1 + SP
+        and #$04    // test "I" bit
+        bne go_isr  // if interrupts were already disabled before NMI occured
+                    // then don't re-enable them, as that will likely cause a 2nd re-entrant interrupt
+
+        cli         // allow normal interrupts
+
+go_isr:
+        jsr nmi_isr
+        pla
+        tay
+        pla
+        tax
+        pla
+        rti
+  }
+}
+
+#endif
 
 RIRQCode	rirq_isr, rirq_mark0, rirq_mark1, rirq_bitmap;
 
@@ -71,13 +157,13 @@ const SIDFX basefx = {
 	0
 };
 
-SIDFX	effects[10];
+SIDFX	effects[max_neffects];
 
-char 	neffects = 1;
+char	neffects = 1;
 
 const char SidHead[] = S"  TSRNG FREQ  PWM  ADSR DFREQ DPWM T1 T0";
 const char SidRow[]  = S"# TSRNG 00000 0000 0000 00000 0000 00 00";
-const char MenuRow[] = S"LOAD SAVE NEW  UNDO [..................]";
+const char MenuRow[] = S"LOAD SAVE NEW  D09  [..............]    ";
 
 const char HexDigit[] = S"0123456789ABCDEF";
 
@@ -92,17 +178,33 @@ void uto5digit(unsigned u, char * d)
 }
 
 char cursorX, cursorY;
+char drive = 9; // vice defaults to an iecdrive9 on host file system, which is a convenient use case
+
+void showdrive(void)
+{
+	char* dp = Screen + (max_neffects + 1) * 40;
+	char* cp = Color + (max_neffects + 1) * 40;
+    
+    char fs[6];
+	uto5digit(drive, fs);
+	for (char i = 0; i < 2; i++)
+	{
+		dp[16 + i] = fs[i + 3];
+		cp[16 + i] = VCOL_LT_BLUE;
+	}
+}
 
 void showmenu(void)
 {
-	char * dp = Screen + 11 * 40;
-	char * cp = Color + 11 * 40;
+	char* dp = Screen + (max_neffects + 1) * 40;
+	char* cp = Color + (max_neffects + 1) * 40;
 
 	for(char i=0; i<40; i++)
 	{
 		dp[i] = MenuRow[i];
 		cp[i] = VCOL_LT_BLUE;
 	}
+    showdrive();
 }
 
 void hires_draw_start(void);
@@ -121,7 +223,7 @@ void showfxs_row(char n)
 	if (n < neffects)
 	{
 		char fs[6];
-		dp[0] = '0' + n;
+		dp[0] = n < 10 ? '0' + n : S'a' + n - 10;
 		cp[0] = VCOL_YELLOW;
 
 		SIDFX	&	s = effects[n];
@@ -216,7 +318,7 @@ void showfxs(void)
 		cp[i] = VCOL_LT_BLUE;
 	}
 
-	for(char i=0; i<10; i++)
+	for(char i=0; i<max_neffects; i++)
 		showfxs_row(i);
 }
 
@@ -275,9 +377,9 @@ void check_digit(SIDFX & s, char d)
 
 void edit_filename(char * fn)
 {
-	char * dp = Screen + 11 * 40;
+	char * dp = Screen + (max_neffects + 1) * 40;
 	char i = 0;
-	while (dp[21 + i] != '.')
+	while (dp[21 + i] != S'.' && dp[21 + i] != S']')
 	{
 		char ch = dp[21 + i];
 		if (ch >= '0' && ch <= '9' || ch == '-')
@@ -289,24 +391,49 @@ void edit_filename(char * fn)
 	fn[i] = 0;
 }
 
-char save_drive = 9;
-
-char msg_buffer[40];
-
-void iec_read_status(void)
+void show_msg(const char* msg, bool petscii = false)
 {
-	iec_talk(save_drive, 15);
-	char i = 0;
-	while (iec_status == IEC_OK)
-		msg_buffer[i++] = iec_read();
-	msg_buffer[i] = 0;
-	iec_untalk();
+	save_menu();
+	char* sp      = Screen + (max_neffects + 1) * 40;
+	char* cp      = Color + (max_neffects + 1) * 40;
+	bool  msg_end = false;
+	for (char i = 0; i < 40; i++)
+	{
+		char ch = msg[i];
+		if (!ch)
+		{
+			msg_end = true;
+		}
+		if (petscii && ch >= 64) ch -= 64;
+		sp[i] = msg_end ? S' ' : ch;
+		cp[i] = VCOL_RED;
+	}
+	msg_cnt = 100; // restore menu after 2secs
+}
+
+char filenum = 2;
+char filechannel = 2;
+
+char drive_status[40];
+void read_drive_status(void)
+{
+    memset(drive_status, 0, 40);
+	krnio_setnam("");
+	krnio_open(15, drive, 15);
+    char n = krnio_read(15, drive_status, 40);
+    // trim off trailing CR
+    if (n > 0 && drive_status[n-1] == 13) drive_status[n-1] = 0;
+    krnio_close(15);
 }
 
 void edit_load(void)
 {
 	rirq_stop();
-
+	vic.intr_enable = 0;
+        
+#ifdef OSFXEDIT_USE_NMI
+	cia2.icr = 0b00000001; // disable NMI
+#endif
 	bool ok = false;
 
 	char fname[24];
@@ -315,30 +442,56 @@ void edit_load(void)
 	edit_filename(fname);
 	strcat(fname, ",P,R");
 
-	iec_open(save_drive, 2, fname);
-	iec_talk(save_drive, 2);
-
-	// Magic code and save file version
-	char v = iec_read();
-	if (iec_status == IEC_OK && v >= 0xb3)
+	krnio_setnam(fname);
+	if (krnio_open(filenum, drive, filechannel))
 	{
-		neffects = iec_read();
-		iec_read_bytes((char *)effects, sizeof(SIDFX) * neffects);
-		ok = true;
+
+		// Magic code and save file version
+		char v = krnio_getch(filenum);
+        auto status = krnio_status();
+		if (status == KRNIO_OK)
+		{
+			if (v <= 0xb3)
+			{
+				neffects = krnio_getch(filenum);
+				krnio_read(filenum, (char*)effects, sizeof(SIDFX) * neffects);
+				ok = true;
+			}
+			else
+			{
+				show_msg(S"incorrect file version");
+			}
+		}
+		else if (status & KRNIO_EOF)
+        {
+			show_msg(S"could not read from file");
+		}
+		else
+		{
+			read_drive_status();
+			show_msg(drive_status, true);
+		}
+		krnio_close(filenum);
+	}
+	else
+	{
+		show_msg(S"drive does not exist");
 	}
 
-	iec_untalk();
-	iec_close(save_drive, 2);
-
-	if (!ok)
-		iec_read_status();
-
+#ifdef OSFXEDIT_USE_NMI
+	cia2.icr = 0b10000001; // enable NMI
+#endif
+	vic.intr_enable = 1;
 	rirq_start();
 }
 
 void edit_save(void)
 {
 	rirq_stop();
+	vic.intr_enable = 0;
+#ifdef OSFXEDIT_USE_NMI
+	cia2.icr = 0b00000001; // disable NMI
+#endif
 
 	bool ok = false;
 
@@ -348,54 +501,63 @@ void edit_save(void)
 	edit_filename(fname + 3);
 	strcat(fname, ",P,W");
 
-	iec_open(save_drive, 2, fname);
-	iec_listen(save_drive, 2);
-
-	// Magic code and save file version
-	iec_write(0xb3);
-	if (iec_status < IEC_ERROR)
+	krnio_setnam(fname);
+	if (krnio_open(filenum, drive, filechannel))
 	{
-		iec_write(neffects);
-		iec_write_bytes((char *)effects, sizeof(SIDFX) * neffects);
-		if (iec_status < IEC_ERROR)
-			ok = true;
-	}
-
-	iec_unlisten();
-	iec_close(save_drive, 2);
-
-	if (ok)
-	{
-		strcpy(fname, "@0:");
-		edit_filename(fname + 3);
-		strcat(fname, p".c" ",P,W");
-
-		iec_open(save_drive, 2, fname);
-		iec_listen(save_drive, 2);
-
-		edit_filename(fname);
-
-		char buffer[200];
-		sprintf(buffer, "static const SIDFX SFX_%s[] = {\n", fname);
-		iec_write_bytes(buffer, strlen(buffer));
-
-		for(char i=0; i<neffects; i++)
+		// Magic code and save file version
+		krnio_putch(2, 0xb3);
+		if (krnio_status() == KRNIO_OK)
 		{
-			const SIDFX & s(effects[i]);
-			sprintf(buffer, "\t{%u, %u, 0x%02x, 0x%02x, 0x%02x, %d, %d, %d, %d, 0},\n",
-				s.freq, s.pwm, s.ctrl, s.attdec, s.susrel, s.dfreq, s.dpwm, s.time1, s.time0);
-			iec_write_bytes(buffer, strlen(buffer));
+			krnio_putch(filenum, neffects);
+			krnio_write(filenum, (char*)effects, sizeof(SIDFX) * neffects);
+			if (krnio_status() == KRNIO_OK) ok = true;
 		}
-		sprintf(buffer, "};\n");
-		iec_write_bytes(buffer, strlen(buffer));
 
-		iec_unlisten();
-		iec_close(save_drive, 2);
+		krnio_close(filenum);
+		if (ok)
+		{
+			strcpy(fname, "@0:");
+			edit_filename(fname + 3);
+			strcat(fname, p".c,P,W");
+
+			krnio_setnam(fname);
+			krnio_open(filenum, drive, filechannel);
+			edit_filename(fname);
+
+			char buffer[200];
+			int  len = sprintf(buffer, "static const SIDFX SFX_%s[] = {\n", fname);
+			krnio_write(filenum, buffer, len);
+
+			for (char i = 0; i < neffects; i++)
+			{
+				const SIDFX& s(effects[i]);
+				len = sprintf(
+				    buffer,
+				    "\t{%u, %u, 0x%02x, 0x%02x, 0x%02x, %d, %d, %d, %d, 0},\n",
+				    s.freq, s.pwm, s.ctrl, s.attdec, s.susrel, s.dfreq, s.dpwm,
+				    s.time1, s.time0);
+				krnio_write(filenum, buffer, len);
+			}
+			len = sprintf(buffer, "};\n");
+			krnio_write(filenum, buffer, len);
+
+			krnio_close(filenum);
+		}
+		else
+		{
+			read_drive_status();
+			show_msg(drive_status, true);
+		}
+	}
+	else
+	{
+		show_msg(S"drive does not exist");
 	}
 
-	if (!ok)
-		iec_read_status();
-
+#ifdef OSFXEDIT_USE_NMI
+	cia2.icr = 0b10000001; // enable NMI
+#endif
+	vic.intr_enable = 1;
 	rirq_start();
 }
 
@@ -405,12 +567,7 @@ void edit_new(void)
 	effects[0] = basefx;
 }
 
-void edit_undo(void)
-{
-
-}
-
-char * menup = Screen + 11 * 40;
+char * menup = Screen + (max_neffects + 1) * 40;
 
 void edit_menu(char k)
 {
@@ -418,7 +575,7 @@ void edit_menu(char k)
 	switch(k)
 	{
 	case KSCAN_CSR_DOWN | KSCAN_QUAL_SHIFT:
-		if (neffects < 10)
+		if (neffects < max_neffects)
 			cursorY = neffects;
 		else
 			cursorY = 9;
@@ -428,7 +585,7 @@ void edit_menu(char k)
 			cursorX += 5;
 		else if (cursorX == 15)
 			cursorX = 21;
-		else if (cursorX < 38 && menup[cursorX] != '.')
+		else if (cursorX < 34 && menup[cursorX] != '.')
 			cursorX++;
 		break;
 	case KSCAN_CSR_RIGHT | KSCAN_QUAL_SHIFT:
@@ -446,30 +603,49 @@ void edit_menu(char k)
 			edit_load();
 			showfxs();
 			hires_draw_start();
+                        cursorY = neffects;
 			break;
 		case 5:
 			edit_save();
+                        cursorY = neffects;
+			cursorX = 0;
 			break;
 		case 10:
 			edit_new();
 			showfxs();
 			hires_draw_start();
-			break;
-		case 15:
-			edit_undo();
+                        cursorY = neffects;
+			cursorX = 0;
 			break;
 		default:
 			cursorX = 0;
 			break;
 		}
 		break;
+	case KSCAN_PLUS:
+	case KSCAN_DOT:
+	case KSCAN_EQUAL:
+        if (cursorX == 15 && drive < 11)
+        {
+          drive++;
+          showdrive();
+        }
+		break;
+	case KSCAN_MINUS:
+	case KSCAN_COMMA:
+        if (cursorX == 15 && drive > 8)
+        {
+          drive--;
+          showdrive();
+        }
+		break;
 	case KSCAN_DEL:
 		if (cursorX > 21)
 		{
 			cursorX--;
-			for(char i=cursorX; i<38; i++)
+			for(char i=cursorX; i<34; i++)
 				menup[i] = menup[i + 1];
-			menup[38] = '.';
+			menup[34] = '.';
 		}
 		break;
 	case KSCAN_HOME:
@@ -487,7 +663,7 @@ void edit_menu(char k)
 				else if (ch >= 'A' && ch <= 'Z')
 					ch -= 'A' - S'A';
 
-				for(char i=38; i>=cursorX; i--)
+				for(char i=33; i>=cursorX; i--)
 					menup[i + 1] = menup[i];
 				menup[cursorX] = ch;
 				if (cursorX < 38)
@@ -502,6 +678,7 @@ void edit_effects(char k)
 {
 	bool	restart = false;
 	bool	redraw = false;
+	bool	redraw_all = false;
 
 	SIDFX	&	s = effects[cursorY];
 
@@ -519,7 +696,7 @@ void edit_effects(char k)
 		if (cursorY < neffects)
 			cursorY++;
 		else
-			cursorY = 10;
+			cursorY = max_neffects;
 		break;
 	case KSCAN_CSR_DOWN | KSCAN_QUAL_SHIFT:
 		if (cursorY > 0)
@@ -538,17 +715,20 @@ void edit_effects(char k)
 		break;
 	case KSCAN_PLUS:
 	case KSCAN_DOT:
+	case KSCAN_EQUAL:
 		switch (cursorX)
 		{
 		case 0:
-			 if (neffects < 10)
+			 if (neffects < max_neffects)
 			 {
 			 	if (cursorY == neffects)
 			 		effects[neffects] = basefx;
 			 	else
 			 	{
-				 	for(char i=neffects; i>cursorY; i--)
-				 		effects[i] = effects[i - 1];			 		
+                                        for(char i=neffects; i>cursorY; i--) {
+				 		effects[i] = effects[i - 1];
+                                        }
+                                        redraw_all = true;
 			 	}
 
 			 	neffects++; 
@@ -607,6 +787,7 @@ void edit_effects(char k)
 				neffects--;
 				for(char i=cursorY; i<neffects; i++)
 					effects[i] = effects[i + 1];						
+                                redraw_all = true;
 			}
 			break;
 
@@ -668,12 +849,17 @@ void edit_effects(char k)
 
 	if (restart)
 	{
-		sidfx_stop(0);
-		sidfx_play(0, effects, neffects);
+		sidfx_stop(voice);
+		sidfx_play(voice, effects, neffects);
 		irq_cnt = 0;
 	}
 
-	if (redraw)
+	if (redraw_all)
+	{
+		showfxs();
+		hires_draw_start();
+	}
+        else if (redraw)
 	{
 		showfxs_row(cursorY);		
 		hires_draw_start();
@@ -711,7 +897,11 @@ struct VirtualSID
 
 // Maximum value and per frame step for ADSR emulation
 static const unsigned AMAX	= 32 * 256 - 1;
+#ifdef OSFXEDIT_USE_NMI
+static const unsigned TSTEP = nmi_cycles / 1000; // ms/frame
+#else
 static const unsigned TSTEP = 20; // ms/frame
+#endif
 static const unsigned ASTEP = (unsigned long)AMAX * TSTEP / 4;
 
 // ADSR constants
@@ -938,7 +1128,7 @@ void hires_draw_tick(void)
 			}
 		}
 
-		char * dp = Hires + 320 * 12 + 8 * vsid.tick;
+		char * dp = Hires + 320 * (max_neffects + 2) + 8 * vsid.tick;
 		hires_bar(dp, ady);
 		dp += 320 * 4;
 		hires_bar(dp, fry);	
@@ -953,7 +1143,10 @@ int main(void)
 	cia_init();
 
 	mmap_set(MMAP_CHAR_ROM);
-	memcpy(Hires, Font, 0x0800);
+	memcpy(Hires, ROMFont, 0x0800); // use redundant 1st half of hires to store font
+	mmap_set(MMAP_NO_BASIC);
+	memcpy((char*)0xe000, (char*)0xe000, 0x2000); // copy ROM to RAM
+	mmap_set(MMAP_NO_ROM);
 
 	memset(Sprites, 0, 256);
 	for(char i=0; i<9; i++)
@@ -961,15 +1154,22 @@ int main(void)
 	Sprites[1 * 64 + 3 * 8] = 0xff;
 	for(char i=0; i<21; i++)
 		Sprites[2 * 64 + 3 * i] = 0xf0;
-	mmap_set(MMAP_NO_ROM);
 
 	spr_init(Screen);
 
 	vic_setmode(VICM_TEXT, Screen, Hires);
 
+#ifdef OSFXEDIT_USE_NMI
+	*(void**)0xfffa = nmi_isr_stub;
+	vic_waitLine(nmi_start_rasterline); // start in consistent place to avoid flicker at hires transition
+	cia2.ta	 = nmi_cycles;
+	cia2.icr = 0b10000001;
+	cia2.cra = 0b00010001;
+#endif
+
 	sidfx_init();
 
-	rirq_init_io();
+	rirq_init_kernal();
 
 	rirq_build(&rirq_isr, 2);
 	rirq_write(&rirq_isr, 0, &vic.ctrl1, VIC_CTRL1_DEN | VIC_CTRL1_RSEL | 3);
@@ -985,7 +1185,7 @@ int main(void)
 	rirq_build(&rirq_bitmap, 2);
 	rirq_delay(&rirq_bitmap, 10);
 	rirq_write(&rirq_bitmap, 1, &vic.ctrl1, VIC_CTRL1_DEN | VIC_CTRL1_RSEL | VIC_CTRL1_BMM | 3);
-	rirq_set(3, 49 + 8 * 12, &rirq_bitmap);
+	rirq_set(3, 49 + 8 * (max_neffects + 2), &rirq_bitmap);
 
 	rirq_sort();
 	rirq_start();
@@ -1004,13 +1204,13 @@ int main(void)
 	showmenu();
 	hires_draw_start();
 
-	memset(Hires + 12 * 320, 0, 13 * 320);
-	memset(Screen + 12 * 40, 0x70, 160);
-	memset(Screen + 16 * 40, 0xe0, 160);
+	memset(Hires + (max_neffects + 2) * 320, 0, 13 * 320);
+	memset(Screen + (max_neffects + 2) * 40, 0x70, 160);
+	memset(Screen + (max_neffects + 2 + 4) * 40, 0xe0, 160);
 
-	spr_set(0, true, 0, 0, 64, VCOL_WHITE, false, false, false);
-	spr_set(1, true, 0, 0, 66, VCOL_BLUE, false, false, true);
-	spr_set(2, true, 0, 0, 66, VCOL_BLUE, false, false, true);
+	spr_set(0, true, 0, 0, sprite_img_base + 0, VCOL_WHITE, false, false, false);
+	spr_set(1, true, 0, 0, sprite_img_base + 2, VCOL_BLUE, false, false, true);
+	spr_set(2, true, 0, 0, sprite_img_base + 2, VCOL_BLUE, false, false, true);
 
 	vic.spr_priority = 0x07;
 
@@ -1020,10 +1220,10 @@ int main(void)
 		char * curp = Screen + 40 + 40 * cursorY + cursorX;
 		char * curc = Color + 40 + 40 * cursorY + cursorX;
 
-		if (cursorY < 10 || cursorX >= 20)
+		if (cursorY < max_neffects || cursorX >= 20)
 		{
 			spr_move(0, 24 + 8 * cursorX, 49 + 8 + 8 * cursorY);
-			spr_image(0, 64 + ((csr_cnt >> 4) & 1));
+			spr_image(0, sprite_img_base + ((csr_cnt >> 4) & 1));
 		}
 		else
 		{
@@ -1032,14 +1232,14 @@ int main(void)
 				curc[i] = VCOL_YELLOW;
 		}
 
-		vic.color_border = VCOL_ORANGE;
+		// vic.color_border = VCOL_ORANGE;
 		hires_draw_tick();
 		hires_draw_tick();
 		hires_draw_tick();
-		vic.color_border = VCOL_BLACK;
+		// vic.color_border = VCOL_BLACK;
 
 		vic_waitBottom();
-		if (sidfx_idle(0))
+		if (sidfx_idle(voice))
 		{
 			spr_move(1, 0, 0);
 			spr_move(2, 0, 0);
@@ -1053,10 +1253,18 @@ int main(void)
 		}
 		else
 		{
-			spr_move(1, 24 + 4 * irq_cnt, 12 * 8 + 49);
-			spr_move(2, 24 + 4 * irq_cnt, 15 * 8 + 49);
+			if (irq_cnt < 100)
+			{
+				spr_move(1, 24 + 4 * irq_cnt, (max_neffects + 2) * 8 + 49);
+				spr_move(2, 24 + 4 * irq_cnt, (max_neffects + 2 + 3) * 8 + 49);
+			}
+			else
+			{
+				spr_move(1, 0, 0);
+				spr_move(2, 0, 0);
+			}
 
-			char sx = (neffects - sidfx_cnt(0)) * 8 + 49;
+			char sx = (neffects - sidfx_cnt(voice)) * 8 + 49;
 			if (!markset)
 			{
 				rirq_set(1, sx, &rirq_mark0); 
@@ -1071,7 +1279,7 @@ int main(void)
 			rirq_sort();
 		}
 
-		if (cursorY < 10 || cursorX >= 20)
+		if (cursorY < max_neffects || cursorX >= 20)
 			;
 		else
 		{
@@ -1086,16 +1294,16 @@ int main(void)
 			char k = keyb_queue & KSCAN_QUAL_MASK;
 			keyb_queue = 0;
 
-			if (cursorY < 10)
+			if (cursorY < max_neffects)
 			{
 				edit_effects(k);
-				if (cursorY == 10)
+				if (cursorY == max_neffects)
 				{
 					if (cursorX < 20)
 						cursorX = cursorX / 5 * 5;
 					else
 					{
-						while (menup[cursorX - 1] == '.')
+						while (cursorX > 34 || menup[cursorX - 1] == '.')
 							cursorX--;
 					}
 				}
