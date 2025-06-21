@@ -163,7 +163,7 @@ char	neffects = 1;
 
 const char SidHead[] = S"  TSRNG FREQ  PWM  ADSR DFREQ DPWM T1 T0";
 const char SidRow[]  = S"# TSRNG 00000 0000 0000 00000 0000 00 00";
-const char MenuRow[] = S"LOAD SAVE NEW  UNDO [..............]    ";
+const char MenuRow[] = S"LOAD SAVE NEW  D09  [..............]    ";
 
 const char HexDigit[] = S"0123456789ABCDEF";
 
@@ -178,6 +178,21 @@ void uto5digit(unsigned u, char * d)
 }
 
 char cursorX, cursorY;
+char drive = 9; // vice defaults to an iecdrive9 on host file system, which is a convenient use case
+
+void showdrive(void)
+{
+	char* dp = Screen + (max_neffects + 1) * 40;
+	char* cp = Color + (max_neffects + 1) * 40;
+    
+    char fs[6];
+	uto5digit(drive, fs);
+	for (char i = 0; i < 2; i++)
+	{
+		dp[16 + i] = fs[i + 3];
+		cp[16 + i] = VCOL_LT_BLUE;
+	}
+}
 
 void showmenu(void)
 {
@@ -189,6 +204,7 @@ void showmenu(void)
 		dp[i] = MenuRow[i];
 		cp[i] = VCOL_LT_BLUE;
 	}
+    showdrive();
 }
 
 void hires_draw_start(void);
@@ -395,7 +411,6 @@ void show_msg(const char* msg, bool petscii = false)
 	msg_cnt = 100; // restore menu after 2secs
 }
 
-char drive = 8;
 char filenum = 2;
 char filechannel = 2;
 
@@ -460,7 +475,7 @@ void edit_load(void)
 	}
 	else
 	{
-		show_msg(S"could not open file");
+		show_msg(S"drive does not exist");
 	}
 
 #ifdef OSFXEDIT_USE_NMI
@@ -487,51 +502,56 @@ void edit_save(void)
 	strcat(fname, ",P,W");
 
 	krnio_setnam(fname);
-	krnio_open(filenum, drive, filechannel);
-
-	// Magic code and save file version
-	krnio_putch(2, 0xb3);
-	if (krnio_status() == KRNIO_OK)
+	if (krnio_open(filenum, drive, filechannel))
 	{
-		krnio_putch(filenum, neffects);
-		krnio_write(filenum, (char *)effects, sizeof(SIDFX) * neffects);
+		// Magic code and save file version
+		krnio_putch(2, 0xb3);
 		if (krnio_status() == KRNIO_OK)
-			ok = true;
-	}
-
-	krnio_close(filenum);
-
-	if (ok)
-	{
-		strcpy(fname, "@0:");
-		edit_filename(fname + 3);
-		strcat(fname, p".c" ",P,W");
-
-		krnio_setnam(fname);
-		krnio_open(filenum, drive, filechannel);
-
-		edit_filename(fname);
-
-		char buffer[200];
-		int len = sprintf(buffer, "static const SIDFX SFX_%s[] = {\n", fname);
-		krnio_write(filenum, buffer, len);
-
-		for(char i=0; i<neffects; i++)
 		{
-			const SIDFX & s(effects[i]);
-			len = sprintf(buffer, "\t{%u, %u, 0x%02x, 0x%02x, 0x%02x, %d, %d, %d, %d, 0},\n",
-				s.freq, s.pwm, s.ctrl, s.attdec, s.susrel, s.dfreq, s.dpwm, s.time1, s.time0);
-			krnio_write(filenum, buffer, len);
+			krnio_putch(filenum, neffects);
+			krnio_write(filenum, (char*)effects, sizeof(SIDFX) * neffects);
+			if (krnio_status() == KRNIO_OK) ok = true;
 		}
-		len = sprintf(buffer, "};\n");
-		krnio_write(filenum, buffer, len);
 
 		krnio_close(filenum);
+		if (ok)
+		{
+			strcpy(fname, "@0:");
+			edit_filename(fname + 3);
+			strcat(fname, p".c,P,W");
+
+			krnio_setnam(fname);
+			krnio_open(filenum, drive, filechannel);
+			edit_filename(fname);
+
+			char buffer[200];
+			int  len = sprintf(buffer, "static const SIDFX SFX_%s[] = {\n", fname);
+			krnio_write(filenum, buffer, len);
+
+			for (char i = 0; i < neffects; i++)
+			{
+				const SIDFX& s(effects[i]);
+				len = sprintf(
+				    buffer,
+				    "\t{%u, %u, 0x%02x, 0x%02x, 0x%02x, %d, %d, %d, %d, 0},\n",
+				    s.freq, s.pwm, s.ctrl, s.attdec, s.susrel, s.dfreq, s.dpwm,
+				    s.time1, s.time0);
+				krnio_write(filenum, buffer, len);
+			}
+			len = sprintf(buffer, "};\n");
+			krnio_write(filenum, buffer, len);
+
+			krnio_close(filenum);
+		}
+		else
+		{
+			read_drive_status();
+			show_msg(drive_status, true);
+		}
 	}
 	else
 	{
-        read_drive_status();
-        show_msg(drive_status, true);
+		show_msg(S"drive does not exist");
 	}
 
 #ifdef OSFXEDIT_USE_NMI
@@ -602,13 +622,27 @@ void edit_menu(char k)
                         cursorY = neffects;
 			cursorX = 0;
 			break;
-		case 15:
-			edit_undo();
-			break;
 		default:
 			cursorX = 0;
 			break;
 		}
+		break;
+	case KSCAN_PLUS:
+	case KSCAN_DOT:
+	case KSCAN_EQUAL:
+        if (cursorX == 15 && drive < 11)
+        {
+          drive++;
+          showdrive();
+        }
+		break;
+	case KSCAN_MINUS:
+	case KSCAN_COMMA:
+        if (cursorX == 15 && drive > 8)
+        {
+          drive--;
+          showdrive();
+        }
 		break;
 	case KSCAN_DEL:
 		if (cursorX > 21)
