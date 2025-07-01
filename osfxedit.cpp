@@ -430,6 +430,9 @@ void edit_load(void)
 {
 	rirq_stop();
 	vic.intr_enable = 0;
+	spr_show(0, false);
+	spr_show(1, false);
+	spr_show(2, false);
         
 #ifdef OSFXEDIT_USE_NMI
 	cia2.icr = 0b00000001; // disable NMI
@@ -481,6 +484,9 @@ void edit_load(void)
 #ifdef OSFXEDIT_USE_NMI
 	cia2.icr = 0b10000001; // enable NMI
 #endif
+	spr_show(0, true);
+	spr_show(1, true);
+	spr_show(2, true);
 	vic.intr_enable = 1;
 	rirq_start();
 }
@@ -489,6 +495,10 @@ void edit_save(void)
 {
 	rirq_stop();
 	vic.intr_enable = 0;
+	spr_show(0, false);
+	spr_show(1, false);
+	spr_show(2, false);
+
 #ifdef OSFXEDIT_USE_NMI
 	cia2.icr = 0b00000001; // disable NMI
 #endif
@@ -557,6 +567,9 @@ void edit_save(void)
 #ifdef OSFXEDIT_USE_NMI
 	cia2.icr = 0b10000001; // enable NMI
 #endif
+	spr_show(0, true);
+	spr_show(1, true);
+	spr_show(2, true);
 	vic.intr_enable = 1;
 	rirq_start();
 }
