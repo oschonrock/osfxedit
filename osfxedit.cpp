@@ -528,7 +528,7 @@ void edit_save(void)
 		{
 			strcpy(fname, "@0:");
 			edit_filename(fname + 3);
-			strcat(fname, p".c,P,W");
+                        strcat(fname, p".c" ",P,W");
 
 			krnio_setnam(fname);
 			krnio_open(filenum, drive, filechannel);
@@ -537,20 +537,26 @@ void edit_save(void)
 			char buffer[200];
 			int  len = sprintf(buffer, "static const SIDFX SFX_%s[] = {\n", fname);
 			krnio_write(filenum, buffer, len);
+			if (krnio_status() == KRNIO_OK) {
 
-			for (char i = 0; i < neffects; i++)
-			{
-				const SIDFX& s(effects[i]);
-				len = sprintf(
-				    buffer,
-				    "\t{%u, %u, 0x%02x, 0x%02x, 0x%02x, %d, %d, %d, %d, 0},\n",
-				    s.freq, s.pwm, s.ctrl, s.attdec, s.susrel, s.dfreq, s.dpwm,
-				    s.time1, s.time0);
+				for (char i = 0; i < neffects; i++)
+				{
+					const SIDFX& s(effects[i]);
+					len = sprintf(
+					    buffer,
+					    "\t{%u, %u, 0x%02x, 0x%02x, 0x%02x, %d, %d, %d, %d, 0},\n",
+					    s.freq, s.pwm, s.ctrl, s.attdec, s.susrel, s.dfreq, s.dpwm,
+					    s.time1, s.time0);
+					krnio_write(filenum, buffer, len);
+				}
+				len = sprintf(buffer, "};\n");
 				krnio_write(filenum, buffer, len);
 			}
-			len = sprintf(buffer, "};\n");
-			krnio_write(filenum, buffer, len);
-
+			else
+			{
+				read_drive_status();
+				show_msg(drive_status, true);
+			}
 			krnio_close(filenum);
 		}
 		else
